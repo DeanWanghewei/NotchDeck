@@ -1,0 +1,32 @@
+name: NotchDeck
+options:
+  bundleIdPrefix: com.notchdeck
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "13.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+targets:
+  NotchDeck:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+      - path: Core
+      - path: Modules
+      - path: UI
+      - path: Resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.notchdeck.app
+        PRODUCT_NAME: NotchDeck
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_KEY_LSUIElement: true
+        INFOPLIST_KEY_CFBundleDisplayName: NotchDeck
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: "NotchDeck 通过自动化读取并控制音乐播放（Music / Spotify）。"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
