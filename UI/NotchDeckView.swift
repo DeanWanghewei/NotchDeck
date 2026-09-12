@@ -8,11 +8,12 @@ struct NotchDeckView: View {
         ZStack(alignment: .top) {
             if app.isExpanded {
                 PanelRoot()
-                    .transition(.opacity)
+                    .transition(.panelExpand)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(HeightProbe())
+        .animation(.spring(response: 0.42, dampingFraction: 0.85), value: app.isExpanded)
         .onPreferenceChange(PanelHeightKey.self) { height in
             NotchWindowController.shared.updateContentHeight(height)
         }
@@ -112,7 +113,7 @@ private struct PanelRoot: View {
     private func tabContent(in tabs: [ModuleBox]) -> some View {
         if let selected = tabs.first(where: { $0.id == selectedTabID(in: tabs) }) {
             selected.makeContent()
-                .transition(.opacity)
+                .transition(.tabSwitch)
         }
     }
 
@@ -155,7 +156,7 @@ private struct PanelFooter: View {
                 Image(systemName: "gearshape")
                     .font(.system(size: 11))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ScalingButtonStyle())
             .foregroundStyle(.secondary)
             .help("打开设置")
             Button {
@@ -164,7 +165,7 @@ private struct PanelFooter: View {
                 Image(systemName: "power")
                     .font(.system(size: 11))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ScalingButtonStyle())
             .foregroundStyle(.secondary)
             .help("退出 NotchDeck")
         }

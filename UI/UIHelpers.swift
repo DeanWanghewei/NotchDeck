@@ -42,6 +42,33 @@ struct BottomRoundedRectangle: Shape {
     }
 }
 
+/// 按压缩放反馈的图标按钮样式
+struct ScalingButtonStyle: ButtonStyle {
+    var pressedScale: CGFloat = 0.85
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? pressedScale : 1)
+            .opacity(configuration.isPressed ? 0.75 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.55), value: configuration.isPressed)
+    }
+}
+
+/// 面板展开/收起的弹性过渡
+extension AnyTransition {
+    static let panelExpand: AnyTransition = .asymmetric(
+        insertion: .opacity
+            .combined(with: .scale(scale: 0.96, anchor: .top))
+            .combined(with: .offset(y: -6)),
+        removal: .opacity
+            .combined(with: .scale(scale: 0.97, anchor: .top)))
+
+    /// 标签页内容切换：新页自右侧滑入，旧页淡出左移
+    static let tabSwitch: AnyTransition = .asymmetric(
+        insertion: .opacity.combined(with: .offset(x: 16)),
+        removal: .opacity.combined(with: .offset(x: -10)))
+}
+
 enum ByteFormat {
     private static let formatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()

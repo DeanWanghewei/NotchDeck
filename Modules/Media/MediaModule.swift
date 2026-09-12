@@ -9,8 +9,6 @@ struct MediaTrack: Equatable {
     var isPlaying = false
     var appName = ""
     var appBundleID: String?
-    /// true 时通过 AppleScript 控制（脚本路径产出的曲目）
-    var controlViaScript = false
     var artwork: NSImage?
     var duration: Double = 0
     var elapsed: Double = 0
@@ -22,40 +20,52 @@ struct MediaTrack: Equatable {
     }
 }
 
-/// 媒体模块：
-/// - 主路径 AppleScript（Music / Spotify，仅对已安装的 App 发起，避免"选择应用"弹窗）
-/// - 启动时探测系统级"正在播放"（MediaRemote）；系统允许时自动启用，
-///   可覆盖浏览器视频等任意媒体源，控制与读取走系统通道
+/// 媒体模块（最小权限模型）：
+/// - 默认不查询任何 App、不申请任何权限
+/// - 用户在设置中启用某个媒体源（Music / Spotify / …）后才发起 AppleScript，
+///   授权弹窗在"启用后首次读取"那一刻才出现
+/// - 只对已安装且已启用的 App 发起脚本，绝不触发"定位应用"弹窗
+///
+/// 备注：系统级"正在播放"（MediaRemote 私有框架）在 macOS 15.4+ 对第三方进程
+/// 静默不应答且符号 ABI 已变化（ForOrigin 变体），故不接入；模块框架保留了
+/// 接入更广媒体源的位置（knownSources 注册表）。
 final class MediaModule: ObservableObject, NotchModule {
     let id = "media"
     let title = "媒体"
     let systemImage = "waveform"
 
+    /// 受支持的媒体源注册表（后续可扩展更多 App）
+    struct MediaSource {
+        let name: String          // AppleScript 目标名
+        let bundleID: String
+        let displayName: String
+        let symbol: String
+    }
+
+    static let knownSources: [MediaSource] = [
+        MediaSource(name: "Music", bundleID: "com.apple.Music", displayName: "Music", symbol: "music.note"),
+        MediaSource(name: "Spotify", bundleID: "com.spotify.client", displayName: "Spotify", symbol: "dot.radiowaves.left.and.right"),
+    ]
+
+    /// 本机已安装、可添加的媒体源（供设置界面展示）
+    static var installedSources: [MediaSource] {
+        knownSources.filter {
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil
+        }
+    }
+
     @Published private(set) var track: MediaTrack?
     /// track 最近一次更新的时间（进度条推进用）
     private(set) var trackUpdatedAt = Date()
 
-    /// MediaRemote 通道经探测确认可用后为 true
-    private var mediaRemoteAvailable = false
     private var pollTimer: Timer?
-    private var observers: [NSObjectProtocol] = []
     private var refreshDebounce: DispatchWorkItem?
     private let scriptQueue = DispatchQueue(label: "com.notchdeck.media", qos: .utility)
     private var artworkKey = ""
-
-    private enum InfoKey {
-        static let title = "kMRMediaRemoteNowPlayingInfoTitle"
-        static let artist = "kMRMediaRemoteNowPlayingInfoArtist"
-        static let album = "kMRMediaRemoteNowPlayingInfoAlbum"
-        static let duration = "kMRMediaRemoteNowPlayingInfoDuration"
-        static let elapsed = "kMRMediaRemoteNowPlayingInfoElapsedTime"
-        static let artwork = "kMRMediaRemoteNowPlayingInfoArtworkData"
-        static let artworkAlt = "kMRMediaRemoteNowPlayingInfoArtwork"
-    }
+    private let settings = SettingsStore.shared
 
     deinit {
         pollTimer?.invalidate()
-        observers.forEach(NotificationCenter.default.removeObserver)
     }
 
     func start() {
@@ -63,69 +73,64 @@ final class MediaModule: ObservableObject, NotchModule {
         pollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.refresh()
         }
-
-        // 探测系统级"正在播放"是否对本进程开放（部分系统版本会静默忽略第三方调用）
-        MediaRemoteBridge.shared.probe { [weak self] available in
-            guard let self, available else { return }
-            self.mediaRemoteAvailable = true
-            self.registerMediaRemoteObservers()
-            self.refresh()
-        }
     }
 
     func content() -> some View {
         MediaView(module: self)
     }
 
+    /// 供设置界面在启用/关闭媒体源后立即刷新（授权弹窗在此时刻触发，语境清晰）
+    func requestRefresh() {
+        refreshSoon()
+    }
+
+    /// 未配置任何媒体源（用于空态引导）
+    var noSourceConfigured: Bool {
+        enabledSources.isEmpty
+    }
+
+    /// 已启用且已安装的媒体源
+    private var enabledSources: [(name: String, bundleID: String)] {
+        Self.knownSources.compactMap { source in
+            guard settings.mediaSources.contains(source.bundleID),
+                  NSWorkspace.shared.urlForApplication(withBundleIdentifier: source.bundleID) != nil else {
+                return nil
+            }
+            return (source.name, source.bundleID)
+        }
+    }
+
     // MARK: - 控制
 
     func togglePlayPause() {
-        control(.togglePlayPause, script: "playpause")
+        send("playpause")
         refreshSoon()
     }
 
     func playNext() {
-        control(.nextTrack, script: "next track")
+        send("next track")
         refreshSoon()
     }
 
     func playPrevious() {
-        control(.previousTrack, script: "previous track")
+        send("previous track")
         refreshSoon()
     }
 
     /// 跳转到当前播放源对应的 App
     func openApp() {
-        if let bundleID = track?.appBundleID,
-           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
-        } else if let name = track?.appName, !name.isEmpty {
-            Scripting.open(appName: name)
-        }
+        guard let appName = track?.appName, !appName.isEmpty else { return }
+        Scripting.open(appName: appName)
     }
 
-    private func control(_ command: MediaRemoteBridge.Command, script: String) {
-        if track?.controlViaScript == true || !mediaRemoteAvailable {
-            if let appName = track?.appName, !appName.isEmpty {
-                Scripting.run("tell application \"\(appName)\" to \(script)")
-            }
-        } else {
-            MediaRemoteBridge.shared.send(command)
+    private func send(_ command: String) {
+        guard let appName = track?.appName, !appName.isEmpty else { return }
+        scriptQueue.async {
+            Scripting.run("tell application \"\(appName)\" to \(command)")
         }
     }
 
     // MARK: - 状态刷新
-
-    private func registerMediaRemoteObservers() {
-        let center = NotificationCenter.default
-        for name in [MediaRemoteBridge.shared.infoDidChange,
-                     MediaRemoteBridge.shared.playingStateDidChange,
-                     MediaRemoteBridge.shared.nowPlayingAppDidChange].compactMap({ $0 }) {
-            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                self?.refreshSoon()
-            })
-        }
-    }
 
     private func refreshSoon() {
         refreshDebounce?.cancel()
@@ -135,67 +140,18 @@ final class MediaModule: ObservableObject, NotchModule {
     }
 
     func refresh() {
-        if mediaRemoteAvailable {
-            refreshViaMediaRemote()
-        } else {
-            refreshViaAppleScript()
-        }
-    }
-
-    private func refreshViaMediaRemote() {
-        MediaRemoteBridge.shared.requestNowPlayingApp { [weak self] bundleID in
-            guard let self else { return }
-            MediaRemoteBridge.shared.requestIsPlaying { [weak self] playing in
-                guard let self else { return }
-                MediaRemoteBridge.shared.requestNowPlayingInfo { [weak self] info in
-                    guard let self else { return }
-                    if let info, !info.isEmpty, let title = info[InfoKey.title] as? String, !title.isEmpty {
-                        var newTrack = MediaTrack()
-                        newTrack.title = title
-                        newTrack.artist = (info[InfoKey.artist] as? String) ?? ""
-                        newTrack.album = (info[InfoKey.album] as? String) ?? ""
-                        newTrack.duration = (info[InfoKey.duration] as? Double) ?? 0
-                        newTrack.elapsed = (info[InfoKey.elapsed] as? Double) ?? 0
-                        newTrack.isPlaying = playing
-                        newTrack.appBundleID = bundleID
-                        newTrack.appName = Self.displayName(for: bundleID)
-
-                        let key = "\(newTrack.appName)|\(newTrack.title)|\(newTrack.album)"
-                        if key == self.artworkKey {
-                            newTrack.artwork = self.track?.artwork
-                        } else {
-                            self.artworkKey = key
-                            for artworkKey in [InfoKey.artwork, InfoKey.artworkAlt] {
-                                if let data = info[artworkKey] as? Data,
-                                   let image = NSImage(data: data) {
-                                    newTrack.artwork = image
-                                    break
-                                }
-                            }
-                        }
-                        self.track = newTrack
-                        self.trackUpdatedAt = Date()
-                    } else {
-                        // 系统通道无数据：走脚本兜底
-                        self.refreshViaAppleScript()
-                    }
-                }
+        // 最小权限：没有启用的媒体源时不发起任何脚本
+        let candidates = enabledSources
+        guard !candidates.isEmpty else {
+            if track != nil {
+                track = nil
+                artworkKey = ""
             }
+            return
         }
-    }
 
-    private func refreshViaAppleScript() {
         scriptQueue.async { [weak self] in
             guard let self else { return }
-
-            let candidates = Self.installedScriptableApps()
-            guard !candidates.isEmpty else {
-                DispatchQueue.main.async {
-                    self.track = nil
-                    self.artworkKey = ""
-                }
-                return
-            }
 
             var chosen: MediaTrack?
             for (appName, bundleID) in candidates {
@@ -203,7 +159,6 @@ final class MediaModule: ObservableObject, NotchModule {
                       var parsed = Scripting.parse(raw) else { continue }
                 parsed.appName = appName
                 parsed.appBundleID = bundleID
-                parsed.controlViaScript = true
                 if chosen == nil || parsed.isPlaying {
                     chosen = parsed
                 }
@@ -234,32 +189,11 @@ final class MediaModule: ObservableObject, NotchModule {
             }
         }
     }
-
-    // MARK: - 辅助
-
-    private static func installedScriptableApps() -> [(name: String, bundleID: String)] {
-        let known: [(name: String, bundleID: String)] = [
-            ("Music", "com.apple.Music"),
-            ("Spotify", "com.spotify.client"),
-        ]
-        // 只对实际安装的 App 发起脚本，避免系统弹出"定位应用"对话框
-        return known.filter {
-            NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil
-        }
-    }
-
-    private static func displayName(for bundleID: String?) -> String {
-        guard let bundleID,
-              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            return ""
-        }
-        return url.deletingPathExtension().lastPathComponent
-    }
 }
 
-// MARK: - AppleScript 执行（仅针对已安装 App，避免"选择应用"弹窗）
+// MARK: - AppleScript 执行（仅针对已安装且已启用的 App）
 
-private enum Scripting {
+enum Scripting {
     @discardableResult
     static func run(_ source: String) -> String? {
         guard let script = NSAppleScript(source: source) else { return nil }

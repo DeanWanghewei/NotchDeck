@@ -46,6 +46,10 @@ final class SettingsStore: ObservableObject {
     @Published var customItems: [CustomItem] {
         didSet { persist(customItems, forKey: Keys.customItems) }
     }
+    /// 已启用的媒体源（bundleID）；默认为空 = 安装后不申请任何权限
+    @Published var mediaSources: [String] {
+        didSet { defaults.set(mediaSources, forKey: Keys.mediaSources) }
+    }
 
     private let defaults: UserDefaults
 
@@ -58,6 +62,7 @@ final class SettingsStore: ObservableObject {
         static let hotKeyModifiers = "settings.hotKeyModifiers"
         static let moduleConfigs = "settings.moduleConfigs"
         static let customItems = "settings.customItems"
+        static let mediaSources = "settings.mediaSources"
     }
 
     /// 各模块的默认布局
@@ -83,6 +88,7 @@ final class SettingsStore: ObservableObject {
 
         moduleConfigs = Self.decode([String: ModuleConfig].self, forKey: Keys.moduleConfigs, defaults: defaults) ?? [:]
         customItems = Self.decode([CustomItem].self, forKey: Keys.customItems, defaults: defaults) ?? []
+        mediaSources = defaults.stringArray(forKey: Keys.mediaSources) ?? []
     }
 
     // MARK: - 模块配置

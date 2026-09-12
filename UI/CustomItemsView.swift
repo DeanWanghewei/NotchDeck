@@ -25,7 +25,7 @@ struct CustomItemsView: View {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 11))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ScalingButtonStyle())
                 .foregroundStyle(.secondary)
                 .help("重新执行")
                 Text("在设置中添加 / 编辑子项")

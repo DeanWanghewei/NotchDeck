@@ -96,7 +96,7 @@ struct NodeListView: View {
                     .foregroundStyle(.secondary)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ScalingButtonStyle())
             .help("结束进程（SIGTERM）")
         }
         .padding(.horizontal, 8)

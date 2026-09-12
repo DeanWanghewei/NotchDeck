@@ -129,7 +129,7 @@ final class NotchWindowController: NSObject {
 
         let newFrame = frame(withHeight: target, on: screen)
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.32
+            context.duration = 0.38
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             context.allowsImplicitAnimation = true
             panel.animator().setFrame(newFrame, display: true)

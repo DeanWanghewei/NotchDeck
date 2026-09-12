@@ -24,20 +24,52 @@ struct MediaView: View {
                 controls(for: track)
             }
             .frame(minHeight: 64)
+        } else if module.noSourceConfigured {
+            noSourceState
         } else {
             emptyState
         }
     }
 
+    /// 未配置媒体源：引导去设置（默认最小权限，添加源后才申请授权）
+    private var noSourceState: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "waveform.badge.plus")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("未添加媒体源")
+                    .font(.callout)
+                Text("在设置中开启 Music / Spotify")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                NotificationCenter.default.post(name: AppModel.openSettingsRequest, object: nil)
+            } label: {
+                Text("去添加")
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+            }
+            .buttonStyle(ScalingButtonStyle())
+            .foregroundStyle(Color.accentColor)
+            .help("打开设置添加媒体源")
+        }
+        .frame(minHeight: 56)
+    }
+
     private var emptyState: some View {
         HStack(spacing: 10) {
-            Image(systemName: "waveform")
+            Image(systemName: "waveform.slash")
                 .font(.title2)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text("暂无媒体播放")
                     .font(.callout)
-                Text("支持 Music、Spotify 及浏览器等媒体 App")
+                Text("已启用的媒体源上没有正在播放的内容")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -129,7 +161,7 @@ struct MediaView: View {
                 .foregroundStyle(.primary)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ScalingButtonStyle())
         .help(help)
     }
 

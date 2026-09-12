@@ -15,7 +15,7 @@ struct VolumeView: View {
                     .frame(width: 24)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ScalingButtonStyle())
             .help(module.muted ? "取消静音" : "静音")
 
             Slider(value: Binding(
