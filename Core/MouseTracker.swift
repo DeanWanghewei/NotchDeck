@@ -72,6 +72,6 @@ final class MouseTracker {
     private static func isMouseInNotchArea(_ point: NSPoint) -> Bool {
         guard let screen = NSScreen.screens.first, screen.safeAreaInsets.top > 0 else { return false }
         return point.y > screen.frame.maxY - 5 &&
-            abs(point.x - screen.frame.midX) < PanelMetrics.capWidth / 2
+            abs(point.x - screen.frame.midX) < PanelMetrics.hotZoneWidth / 2
     }
 }

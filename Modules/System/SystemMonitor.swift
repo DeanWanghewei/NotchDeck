@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Darwin
+import SwiftUI
 
 struct SystemStats {
     var cpuUsage: Double = 0        // 0...1
@@ -147,5 +148,17 @@ final class SystemMonitor: ObservableObject {
             up += UInt64(data.ifi_obytes)
         }
         return (up, down)
+    }
+}
+
+// MARK: - 面板模块接入
+
+extension SystemMonitor: NotchModule {
+    var id: String { "system" }
+    var title: String { "系统监控" }
+    var systemImage: String { "chart.pie" }
+
+    func content() -> some View {
+        SystemMonitorView(monitor: self)
     }
 }

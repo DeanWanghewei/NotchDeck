@@ -2,14 +2,39 @@ import Carbon.HIToolbox
 import ServiceManagement
 import SwiftUI
 
-/// 设置面板（需求 2.5）：触发行为、快捷键、开机自启动
+/// 设置面板：模块管理、自定义子项、触发行为、快捷键、通用
 struct SettingsView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var isRecordingHotKey = false
+    @State private var isShowingAddItem = false
 
     var body: some View {
         Form {
+            Section("模块管理") {
+                ForEach(AppModel.shared.registry.boxes) { box in
+                    ModuleConfigRow(box: box)
+                }
+                Text("「常驻」固定显示在面板顶部；「切换」显示在下方标签页。关闭后模块不出现在面板。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("自定义子项") {
+                if settings.customItems.isEmpty {
+                    Text("添加 shell 命令小部件，执行结果直接显示在面板中。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(settings.customItems) { item in
+                        CustomItemRow(item: item)
+                    }
+                }
+                Button("添加子项…") {
+                    isShowingAddItem = true
+                }
+            }
+
             Section("触发") {
                 Toggle("悬停刘海自动展开", isOn: $settings.hoverEnabled)
                 if settings.hoverEnabled {
@@ -59,11 +84,135 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 480)
+        .frame(width: 460, height: 700)
+        .sheet(isPresented: $isShowingAddItem) {
+            CustomItemEditView()
+        }
     }
 }
 
-/// 快捷键录制：点击后按下新的组合键，Esc 取消
+// MARK: - 模块配置行
+
+private struct ModuleConfigRow: View {
+    @ObservedObject var box: ModuleBox
+    @ObservedObject private var settings = SettingsStore.shared
+
+    private var enabled: Bool {
+        settings.config(for: box.id).enabled
+    }
+
+    var body: some View {
+        HStack {
+            Toggle(isOn: Binding(
+                get: { enabled },
+                set: { value in
+                    settings.updateConfig(for: box.id) { $0.enabled = value }
+                })) {
+                Label(box.title, systemImage: box.systemImage)
+            }
+            Spacer()
+            if !box.isAvailable() {
+                Text("暂不可用")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                Picker("位置", selection: Binding(
+                    get: { settings.config(for: box.id).pinned },
+                    set: { value in
+                        settings.updateConfig(for: box.id) { $0.pinned = value }
+                    })) {
+                    Text("常驻").tag(true)
+                    Text("切换").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 110)
+                .disabled(!enabled)
+            }
+        }
+    }
+}
+
+// MARK: - 自定义子项行
+
+private struct CustomItemRow: View {
+    let item: CustomItem
+    @ObservedObject private var settings = SettingsStore.shared
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name)
+                    .font(.callout)
+                Text(item.command)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            Button {
+                settings.customItems.removeAll { $0.id == item.id }
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("删除该子项")
+        }
+    }
+}
+
+// MARK: - 自定义子项编辑
+
+private struct CustomItemEditView: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var settings = SettingsStore.shared
+    @State private var name = ""
+    @State private var command = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("添加自定义子项")
+                .font(.headline)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("名称")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("如：本机 IP", text: $name)
+                    .textFieldStyle(.roundedBorder)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("命令（zsh 执行，超时 6 秒）")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("如：ipconfig getifaddr en0", text: $command, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...4)
+                    .font(.system(size: 12, design: .monospaced))
+            }
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }
+                Button("保存") {
+                    let trimmedName = name.trimmingCharacters(in: .whitespaces)
+                    let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmedName.isEmpty, !trimmedCommand.isEmpty else { return }
+                    settings.customItems.append(CustomItem(name: trimmedName, command: trimmedCommand))
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty ||
+                          command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 380, height: 240)
+    }
+}
+
+// MARK: - 快捷键录制
+
 private struct HotKeyRecorderView: View {
     @Binding var isRecording: Bool
     @ObservedObject private var settings = SettingsStore.shared

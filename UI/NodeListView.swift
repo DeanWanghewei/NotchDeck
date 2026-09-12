@@ -2,29 +2,15 @@ import SwiftUI
 
 /// Node 进程列表：端口、名称、PID、CPU/内存占用，支持结束进程（SIGTERM）
 struct NodeListView: View {
-    @EnvironmentObject private var app: AppModel
+    @ObservedObject var scanner: NodeProcessScanner
 
     private var processes: [NodeProcessInfo] {
-        Array(app.node.processes.prefix(10))
+        Array(scanner.processes.prefix(10))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Text("Node 进程")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(app.node.processes.count)")
-                    .font(.caption2.weight(.medium))
-                    .monospacedDigit()
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.2)))
-            }
+            header
             if processes.isEmpty {
                 emptyState
                     .frame(maxWidth: .infinity, minHeight: 72)
@@ -40,6 +26,24 @@ struct NodeListView: View {
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "terminal")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Text("监听端口")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text("\(scanner.processes.count)")
+                .font(.caption2.weight(.medium))
+                .monospacedDigit()
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color.accentColor.opacity(0.2)))
+        }
     }
 
     private var emptyState: some View {
@@ -84,7 +88,7 @@ struct NodeListView: View {
             Button {
                 NodeProcessKiller.terminate(pid: process.pid)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    app.node.scan()
+                    scanner.scan()
                 }
             } label: {
                 Image(systemName: "xmark.bin")

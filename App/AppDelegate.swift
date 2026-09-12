@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let appModel = AppModel()
+    let appModel = AppModel.shared
 
     private let windowController = NotchWindowController.shared
     private let mouseTracker = MouseTracker()
@@ -12,7 +12,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
-        appModel.startAll()
         windowController.configure(with: appModel)
 
         mouseTracker.onShouldExpand = { [weak self] in self?.windowController.expand() }
@@ -88,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showSettingsWindow() {
         if settingsWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 420, height: 470),
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 720),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false)

@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import SwiftUI
 
 struct NodeProcessInfo: Identifiable, Equatable {
     var id: String { "\(pid)-\(port)" }
@@ -104,24 +105,14 @@ final class NodeProcessScanner: ObservableObject {
     }
 }
 
-/// 外部命令执行（使用绝对路径，见风险对策）
-enum Shell {
-    @discardableResult
-    static func run(_ path: String, arguments: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        return String(data: data, encoding: .utf8)
+// MARK: - 面板模块接入
+
+extension NodeProcessScanner: NotchModule {
+    var id: String { "node" }
+    var title: String { "Node 进程" }
+    var systemImage: String { "terminal" }
+
+    func content() -> some View {
+        NodeListView(scanner: self)
     }
 }
