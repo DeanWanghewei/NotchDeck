@@ -28,7 +28,7 @@ private struct PanelRoot: View {
                 // 接壤模式（分层渲染，不用 clipShape）：
                 // 黑色凸形打底（颈部与硬件刘海同色融合）+ 卡片底部圆角裁剪 + 凹角补件
                 let cardTop = PanelMetrics.menuBarHeight + PanelMetrics.gapBelowMenuBar
-                let neckWidth = PanelMetrics.hotZoneWidth
+                let neckWidth = PanelMetrics.neckWidth
                 let fillet: CGFloat = 14
                 let neckL = (PanelMetrics.width - neckWidth) / 2
                 let neckR = (PanelMetrics.width + neckWidth) / 2

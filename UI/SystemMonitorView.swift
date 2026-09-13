@@ -28,7 +28,7 @@ struct SystemMonitorView: View {
 
             if settings.showCPUHeatmap {
                 VStack(spacing: 5) {
-                    UsageHeatmap(label: "CPU", samples: stats.cpuHistory)
+                    UsageAreaChart(label: "CPU", samples: stats.cpuHistory)
                     HStack(spacing: 5) {
                         Text("GPU")
                             .font(.system(size: 9, weight: .medium))
@@ -41,7 +41,7 @@ struct SystemMonitorView: View {
                     }
                     .frame(height: 13)
                 }
-                .help("近 15 分钟使用率，每列约 15 秒")
+                .help("近 15 分钟 CPU 使用率走势，右侧为最新")
             }
 
             if settings.showSwap || settings.showBattery {

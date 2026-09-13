@@ -21,6 +21,8 @@ enum PanelMetrics {
     static let animationDuration: TimeInterval = 0.45
     /// 刘海悬停热区宽度（F1：约 240pt）
     static let hotZoneWidth: CGFloat = 240
+    /// 接壤模式颈部宽度（凸出部分与刘海视觉连接，略窄于热区）
+    static let neckWidth: CGFloat = 200
 
     /// 优先选择带刘海的内置屏；没有刘海时使用当前主屏。
     static var targetScreen: NSScreen? {

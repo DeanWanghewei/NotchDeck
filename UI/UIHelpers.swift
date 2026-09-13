@@ -51,57 +51,83 @@ struct BottomRoundedRectangle: Shape {
     }
 }
 
-/// 15 分钟使用率热力图：样本降采样为 60 列，颜色随占用率从青到红
-struct UsageHeatmap: View {
+/// 15 分钟使用率折线阴影图：折线 + 渐变填充，右侧为最新样本
+struct UsageAreaChart: View {
     let label: String
     let samples: [Double]
-    /// 采样间隔（秒），用于列数计算
-    var sampleInterval: Double = 1
-    var columns: Int = 60
+    var height: CGFloat = 40
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .top, spacing: 6) {
             Text(label)
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 30, alignment: .leading)
-            HStack(spacing: 1.5) {
-                ForEach(0..<columns, id: \.self) { column in
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(cellColor(value(sample: column)))
-                        .frame(height: 13)
-                }
+            chart
+                .frame(height: height)
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(currentText)
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
+                Text("15min")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.tertiary)
             }
-            Text(currentText)
-                .font(.system(size: 9).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 34, alignment: .trailing)
+            .frame(width: 40, alignment: .trailing)
         }
     }
 
-    /// 每列聚合最近一段样本的平均值
-    private func value(sample column: Int) -> Double {
-        let perColumn = max(1, Int(900.0 / Double(columns)))
-        let filled = samples.count
-        // 右侧为最新：空列（尚无数据）显示为近零
-        let end = filled - (columns - 1 - column) * perColumn
-        let start = end - perColumn
-        guard end > 0 else { return 0 }
-        let slice = samples[max(0, start)..<max(0, end)]
-        guard !slice.isEmpty else { return 0 }
-        return slice.reduce(0, +) / Double(slice.count)
+    private var chart: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            ZStack {
+                areaPath(in: size)
+                    .fill(LinearGradient(colors: [Color.accentColor.opacity(0.38),
+                                                  Color.accentColor.opacity(0.02)],
+                                         startPoint: .top, endPoint: .bottom))
+                linePath(in: size)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                if let last = samples.last, !samples.isEmpty {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 4, height: 4)
+                        .position(x: size.width, y: (1 - min(1, max(0, last))) * size.height)
+                }
+            }
+        }
+    }
+
+    /// 样本映射为图表点（右侧为最新；x 相对样本序号均分）
+    private func chartPoints(in size: CGSize) -> [CGPoint] {
+        let values = samples.map { min(1, max(0, $0)) }
+        guard values.count > 1 else {
+            return [CGPoint(x: 0, y: size.height), CGPoint(x: size.width, y: size.height)]
+        }
+        let step = size.width / CGFloat(values.count - 1)
+        return values.enumerated().map { index, value in
+            CGPoint(x: CGFloat(index) * step, y: (1 - value) * size.height)
+        }
+    }
+
+    private func linePath(in size: CGSize) -> Path {
+        var path = Path()
+        let points = chartPoints(in: size)
+        guard let first = points.first else { return path }
+        path.move(to: first)
+        points.dropFirst().forEach { path.addLine(to: $0) }
+        return path
+    }
+
+    private func areaPath(in size: CGSize) -> Path {
+        var path = linePath(in: size)
+        path.addLine(to: CGPoint(x: size.width, y: size.height))
+        path.addLine(to: CGPoint(x: 0, y: size.height))
+        path.closeSubpath()
+        return path
     }
 
     private var currentText: String {
         guard let last = samples.last else { return "--" }
         return String(format: "%.0f%%", last * 100)
-    }
-
-    private func cellColor(_ value: Double) -> Color {
-        let v = min(1, max(0, value))
-        if v < 0.03 { return Color.primary.opacity(0.08) }
-        // 青(0.45) → 红(0)：占用率越高色相越暖
-        return Color(hue: 0.45 * (1 - v), saturation: 0.75, brightness: 0.9)
     }
 }
 

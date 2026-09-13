@@ -232,7 +232,7 @@ struct SettingsView: View {
         }
 
         Section("系统监控显示") {
-            Toggle("CPU 近 15 分钟热力图", isOn: $settings.showCPUHeatmap)
+            Toggle("CPU 近 15 分钟走势图", isOn: $settings.showCPUHeatmap)
             Toggle("交换内存（swap）", isOn: $settings.showSwap)
             Toggle("电池（电量 / 容量 / 循环次数）", isOn: $settings.showBattery)
             HStack {
