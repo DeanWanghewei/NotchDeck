@@ -26,7 +26,10 @@ enum Shell {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        guard process.terminationStatus == 0 else { return nil }
-        return String(data: data, encoding: .utf8)
+        // lsof 输出可能含进程改名产生的非法 UTF-8 字节（如企业微信的 process.title），
+        // 严格解码会整体返回 nil；用 lossy 解码（非法字节替换为 U+FFFD）
+        let text = String(decoding: data, as: UTF8.self)
+        guard !text.isEmpty else { return nil }
+        return text
     }
 }
