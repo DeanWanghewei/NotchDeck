@@ -8,6 +8,17 @@ struct NodeListView: View {
         scanner.processes
     }
 
+    /// 固定行高与可见行数：高度可精确计算，避免 ScrollView 与动态窗口高度的反馈循环
+    private let rowHeight: CGFloat = 34
+    private let rowSpacing: CGFloat = 2
+    private let maxVisibleRows = 8
+
+    /// 列表固定高度 = 可见行数 × 行高 + 行距，超出部分在固定视口内滚动
+    private var listHeight: CGFloat {
+        let visible = max(1, min(processes.count, maxVisibleRows))
+        return CGFloat(visible) * rowHeight + CGFloat(max(0, visible - 1)) * rowSpacing
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
@@ -16,16 +27,17 @@ struct NodeListView: View {
                     .frame(maxWidth: .infinity, minHeight: 72)
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
-                    VStack(spacing: 2) {
+                    VStack(spacing: rowSpacing) {
                         ForEach(processes) { process in
                             row(process)
+                                .frame(height: rowHeight)
                         }
                     }
+                    .padding(1)
                 }
-                .frame(maxHeight: 320, alignment: .top)
+                .frame(height: listHeight)
             }
         }
-        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var header: some View {
@@ -103,8 +115,9 @@ struct NodeListView: View {
             .help("结束进程（SIGTERM）")
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+        .contentShape(Rectangle())
         .help(process.commandLine)
     }
 }
