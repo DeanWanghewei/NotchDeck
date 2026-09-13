@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// Node 进程列表：端口、名称、PID、CPU/内存占用，支持结束进程（SIGTERM）
+/// 监听端口进程列表：零配置展示所有非系统监听进程，支持结束（SIGTERM）
 struct NodeListView: View {
     @ObservedObject var scanner: NodeProcessScanner
 
     private var processes: [NodeProcessInfo] {
-        Array(scanner.processes.prefix(10))
+        scanner.processes
     }
 
     var body: some View {
@@ -22,7 +22,7 @@ struct NodeListView: View {
                         }
                     }
                 }
-                .frame(maxHeight: .infinity, alignment: .top)
+                .frame(maxHeight: 320, alignment: .top)
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
@@ -51,10 +51,10 @@ struct NodeListView: View {
             Image(systemName: "terminal")
                 .font(.title3)
                 .foregroundStyle(.secondary)
-            Text("未发现匹配关键词的监听进程")
+            Text("暂无监听端口的进程")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("关键词匹配进程的可执行文件路径，可在设置中调整")
+            Text("显示当前用户所有监听 TCP 端口的进程（系统守护进程除外）")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -73,7 +73,7 @@ struct NodeListView: View {
                 Text(process.displayName)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
-                Text("PID \(process.pid)")
+                Text("PID \(process.pid) · \(process.executableName)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

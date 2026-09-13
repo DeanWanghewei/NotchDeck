@@ -8,20 +8,11 @@ struct SettingsView: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var isRecordingHotKey = false
     @State private var activeSheet: ActiveSheet?
-    @State private var newKeyword = ""
 
     private enum ActiveSheet: Identifiable {
         case addItem
         case appPicker
         var id: Int { hashValue }
-    }
-
-    private func addKeyword() {
-        let keyword = newKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !keyword.isEmpty,
-              !settings.processKeywords.contains(where: { $0.caseInsensitiveCompare(keyword) == .orderedSame }) else { return }
-        settings.processKeywords.append(keyword)
-        newKeyword = ""
     }
 
     var body: some View {
@@ -93,35 +84,6 @@ struct SettingsView: View {
                     ModuleConfigRow(box: box)
                 }
                 Text("「常驻」固定显示在面板顶部；「切换」显示在下方标签页。关闭后模块不出现在面板。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("进程监控") {
-                ForEach(settings.processKeywords, id: \.self) { keyword in
-                    HStack {
-                        Label(keyword, systemImage: "text.magnifyingglass")
-                            .font(.system(size: 12, design: .monospaced))
-                        Spacer()
-                        Button {
-                            settings.processKeywords.removeAll { $0 == keyword }
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 11))
-                        }
-                        .buttonStyle(ScalingButtonStyle())
-                        .foregroundStyle(.secondary)
-                        .help("移除该关键词")
-                    }
-                }
-                HStack {
-                    TextField("添加关键词（如 node / python / hermes）", text: $newKeyword)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(addKeyword)
-                    Button("添加", action: addKeyword)
-                        .disabled(newKeyword.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-                Text("列出可执行文件路径包含任一关键词、且正在监听端口的进程，支持一键结束（SIGTERM）。例如 node、python，或项目专属路径如 hermes。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

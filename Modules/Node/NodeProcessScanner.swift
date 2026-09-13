@@ -8,24 +8,20 @@ struct NodeProcessInfo: Identifiable, Equatable {
     let pid: pid_t
     let port: Int
     let displayName: String
+    let executableName: String
     let cpuPercent: Double
     let memoryMB: Double
     let commandLine: String
 }
 
-/// 监听端口进程扫描：lsof 找 PID/端口，ps 取可执行文件/命令行/资源占用，
-/// 按用户配置的关键词（默认 node，可添加 hermes/python 等）过滤，每 2 秒刷新
+/// 监听端口进程扫描：零配置，默认列出当前用户所有监听 TCP 端口的非系统进程。
+/// lsof 找 PID/端口，ps 取可执行文件/命令行/资源占用，每 2 秒刷新。
 final class NodeProcessScanner: ObservableObject {
     @Published private(set) var processes: [NodeProcessInfo] = []
-
-    let id = "node"
-    let title = "进程监控"
-    let systemImage = "terminal"
 
     private var timer: Timer?
     private var isScanning = false
     private let scanQueue = DispatchQueue(label: "com.notchdeck.nodescanner", qos: .utility)
-    private let settings = SettingsStore.shared
 
     func start() {
         guard timer == nil else { return }
@@ -43,10 +39,8 @@ final class NodeProcessScanner: ObservableObject {
     func scan() {
         guard !isScanning else { return }
         isScanning = true
-        // 主线程捕获关键词（@Published 属性不应跨线程读）
-        let keywords = settings.processKeywords
         scanQueue.async { [weak self] in
-            let result = Self.performScan(keywords: keywords)
+            let result = Self.performScan()
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.processes = result
@@ -57,17 +51,12 @@ final class NodeProcessScanner: ObservableObject {
 
     // MARK: - 扫描实现
 
-    private static func performScan(keywords: [String]) -> [NodeProcessInfo] {
-        let normalizedKeywords = keywords
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-            .filter { !$0.isEmpty }
-        guard !normalizedKeywords.isEmpty else { return [] }
-
+    private static func performScan() -> [NodeProcessInfo] {
         guard let lsofOutput = Shell.run("/usr/sbin/lsof", arguments: ["-i", "-P", "-n", "-w"]) else {
             return []
         }
 
-        // 1. 收集所有 LISTEN 的 pid + 端口（此处不过滤进程名）
+        // 1. 收集所有 LISTEN 的 pid + 端口
         var pidPorts: [pid_t: Set<Int>] = [:]
         for line in lsofOutput.split(separator: "\n").dropFirst() {
             guard line.contains("(LISTEN)") else { continue }
@@ -108,25 +97,20 @@ final class NodeProcessScanner: ObservableObject {
             }
         }
 
-        // 3. 关键词匹配：可执行文件路径包含任一关键词（不受 process.title 改名影响，
-        //    也不会被命令行里偶现的关键词字样误伤，如 VS Code Helper 中的 node 路径）
-        func isMatched(_ comm: String) -> Bool {
-            guard !comm.isEmpty else { return false }
-            let commLower = comm.lowercased()
-            return normalizedKeywords.contains { commLower.contains($0) }
-        }
-
+        // 3. 组装：排除系统目录下的守护进程（ControlCenter、rapportd 等），其余全部展示
         var result: [NodeProcessInfo] = []
         for (pid, ports) in pidPorts {
             guard let metrics = pidMetrics[pid] else { continue }
             let comm = pidComm[pid] ?? ""
-            guard isMatched(comm) else { continue }
+            guard !isSystemDaemon(comm) else { continue }
 
-            let displayName = displayName(for: metrics.command, fallback: comm)
+            let displayName = displayName(for: metrics.command, comm: comm)
+            let executableName = (comm as NSString).lastPathComponent
             for port in ports {
                 result.append(NodeProcessInfo(pid: pid,
                                               port: port,
                                               displayName: displayName,
+                                              executableName: executableName.isEmpty ? "进程" : executableName,
                                               cpuPercent: metrics.cpu,
                                               memoryMB: metrics.memoryMB,
                                               commandLine: metrics.command))
@@ -135,23 +119,51 @@ final class NodeProcessScanner: ObservableObject {
         return result.sorted { $0.port < $1.port }
     }
 
-    /// 从完整命令行提取展示名：跳过解释器与参数开关，取第一个脚本/模块名（如 server.js、hermes_cli.main）
-    private static func displayName(for commandLine: String, fallback comm: String) -> String {
+    /// 系统自带守护进程（/System、/usr/libexec、/usr/sbin、/sbin）不展示：
+    /// 它们数量多、与开发场景无关，且结束后会被 launchd 自动拉起
+    private static func isSystemDaemon(_ comm: String) -> Bool {
+        guard !comm.isEmpty else { return true }
+        return comm.hasPrefix("/System/") ||
+            comm.hasPrefix("/usr/libexec/") ||
+            comm.hasPrefix("/usr/sbin/") ||
+            comm.hasPrefix("/sbin/")
+    }
+
+    /// 展示名优先级：App 包名（如 企业微信、IntelliJ IDEA）> 脚本/模块名（如 server.js、hermes_cli.main）> 可执行文件名
+    private static func displayName(for commandLine: String, comm: String) -> String {
+        if let bundleName = appBundleName(from: comm) {
+            return bundleName
+        }
         let tokens = commandLine.split(separator: " ").map(String.init)
         for token in tokens.dropFirst() {
             if token.hasPrefix("-") { continue }
             return (token as NSString).lastPathComponent
         }
-        if tokens.first.map({ !$0.isEmpty }) == true {
-            return (tokens.first! as NSString).lastPathComponent
+        let fromCommand = tokens.first.map { ($0 as NSString).lastPathComponent }
+        if let fromCommand, !fromCommand.isEmpty {
+            return fromCommand
         }
-        return (comm as NSString).lastPathComponent.isEmpty ? "进程" : (comm as NSString).lastPathComponent
+        let fromComm = (comm as NSString).lastPathComponent
+        return fromComm.isEmpty ? "进程" : fromComm
+    }
+
+    /// 取最内层 .app 包名：/Applications/Hermes.app/.../Hermes Helper.app/... → "Hermes Helper"
+    private static func appBundleName(from comm: String) -> String? {
+        let components = comm.split(separator: "/").map(String.init)
+        for component in components.reversed() where component.hasSuffix(".app") {
+            return String(component.dropLast(4))
+        }
+        return nil
     }
 }
 
 // MARK: - 面板模块接入
 
 extension NodeProcessScanner: NotchModule {
+    var id: String { "node" }
+    var title: String { "进程监控" }
+    var systemImage: String { "terminal" }
+
     func content() -> some View {
         NodeListView(scanner: self)
     }

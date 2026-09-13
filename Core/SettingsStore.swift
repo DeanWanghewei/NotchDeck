@@ -54,10 +54,6 @@ final class SettingsStore: ObservableObject {
     @Published var panelApps: [PanelApp] {
         didSet { persist(panelApps, forKey: Keys.panelApps) }
     }
-    /// 进程监控关键词：命令行或可执行文件包含任一关键词且监听端口的进程会被列出
-    @Published var processKeywords: [String] {
-        didSet { defaults.set(processKeywords, forKey: Keys.processKeywords) }
-    }
 
     private let defaults: UserDefaults
 
@@ -72,7 +68,6 @@ final class SettingsStore: ObservableObject {
         static let customItems = "settings.customItems"
         static let mediaSources = "settings.mediaSources"
         static let panelApps = "settings.panelApps"
-        static let processKeywords = "settings.processKeywords"
     }
 
     /// 各模块的默认布局
@@ -101,7 +96,6 @@ final class SettingsStore: ObservableObject {
         customItems = Self.decode([CustomItem].self, forKey: Keys.customItems, defaults: defaults) ?? []
         mediaSources = defaults.stringArray(forKey: Keys.mediaSources) ?? []
         panelApps = Self.decode([PanelApp].self, forKey: Keys.panelApps, defaults: defaults) ?? []
-        processKeywords = defaults.stringArray(forKey: Keys.processKeywords) ?? ["node"]
     }
 
     // MARK: - 模块配置
