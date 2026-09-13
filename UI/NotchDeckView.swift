@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 主面板：悬浮在刘海下方的岛屿卡片，高度由内容动态驱动
+/// 主面板：固定尺寸悬浮岛屿，内容填满窗口（展开/收起动画由 SwiftUI 过渡完成）
 struct NotchDeckView: View {
     @EnvironmentObject private var app: AppModel
 
@@ -12,27 +12,7 @@ struct NotchDeckView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(HeightProbe())
         .animation(.spring(response: 0.42, dampingFraction: 0.85), value: app.isExpanded)
-        .onPreferenceChange(PanelHeightKey.self) { height in
-            NotchWindowController.shared.updateContentHeight(height)
-        }
-    }
-}
-
-/// 向窗口控制器上报内容实际高度
-private struct HeightProbe: View {
-    var body: some View {
-        GeometryReader { proxy in
-            Color.clear.preference(key: PanelHeightKey.self, value: proxy.size.height)
-        }
-    }
-}
-
-private struct PanelHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }
 
@@ -71,10 +51,12 @@ private struct PanelRoot: View {
                 emptyHint
             }
 
+            Spacer(minLength: 0)
+
             PanelFooter()
         }
         .padding(16)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(VisualEffectBackground())
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.4))
         .clipShape(RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous))
@@ -82,8 +64,6 @@ private struct PanelRoot: View {
             RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
         )
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: pinned.count)
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: tabs.count)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: app.activeTabID)
     }
 

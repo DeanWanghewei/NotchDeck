@@ -9,6 +9,8 @@ struct NodeProcessInfo: Identifiable, Equatable {
     let port: Int
     let displayName: String
     let executableName: String
+    /// true = App 包内可执行（路径含 .app/）；false = 脚本/命令行进程（node、python、java 等）
+    let isAppProcess: Bool
     let cpuPercent: Double
     let memoryMB: Double
     let commandLine: String
@@ -106,11 +108,13 @@ final class NodeProcessScanner: ObservableObject {
 
             let displayName = displayName(for: metrics.command, comm: comm)
             let executableName = (comm as NSString).lastPathComponent
+            let isAppProcess = comm.contains(".app/")
             for port in ports {
                 result.append(NodeProcessInfo(pid: pid,
                                               port: port,
                                               displayName: displayName,
                                               executableName: executableName.isEmpty ? "进程" : executableName,
+                                              isAppProcess: isAppProcess,
                                               cpuPercent: metrics.cpu,
                                               memoryMB: metrics.memoryMB,
                                               commandLine: metrics.command))

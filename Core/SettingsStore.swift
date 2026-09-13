@@ -54,6 +54,18 @@ final class SettingsStore: ObservableObject {
     @Published var panelApps: [PanelApp] {
         didSet { persist(panelApps, forKey: Keys.panelApps) }
     }
+    /// 进程展示方式：grid（块状网格，默认）/ list（行列表）
+    @Published var processDisplay: String {
+        didSet { defaults.set(processDisplay, forKey: Keys.processDisplay) }
+    }
+    /// 是否显示 App 进程占用的端口
+    @Published var showAppProcesses: Bool {
+        didSet { defaults.set(showAppProcesses, forKey: Keys.showAppProcesses) }
+    }
+    /// 是否显示脚本进程（node/python 等解释器）占用的端口
+    @Published var showScriptProcesses: Bool {
+        didSet { defaults.set(showScriptProcesses, forKey: Keys.showScriptProcesses) }
+    }
 
     private let defaults: UserDefaults
 
@@ -68,6 +80,9 @@ final class SettingsStore: ObservableObject {
         static let customItems = "settings.customItems"
         static let mediaSources = "settings.mediaSources"
         static let panelApps = "settings.panelApps"
+        static let processDisplay = "settings.processDisplay"
+        static let showAppProcesses = "settings.showAppProcesses"
+        static let showScriptProcesses = "settings.showScriptProcesses"
     }
 
     /// 各模块的默认布局
@@ -96,6 +111,9 @@ final class SettingsStore: ObservableObject {
         customItems = Self.decode([CustomItem].self, forKey: Keys.customItems, defaults: defaults) ?? []
         mediaSources = defaults.stringArray(forKey: Keys.mediaSources) ?? []
         panelApps = Self.decode([PanelApp].self, forKey: Keys.panelApps, defaults: defaults) ?? []
+        processDisplay = defaults.string(forKey: Keys.processDisplay) ?? "grid"
+        showAppProcesses = defaults.object(forKey: Keys.showAppProcesses) as? Bool ?? true
+        showScriptProcesses = defaults.object(forKey: Keys.showScriptProcesses) as? Bool ?? true
     }
 
     // MARK: - 模块配置

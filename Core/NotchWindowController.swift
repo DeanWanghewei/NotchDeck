@@ -10,13 +10,14 @@ enum PanelState {
     case collapsing
 }
 
-/// 悬浮岛屿面板尺寸常量：完全独立于刘海，悬浮在菜单栏下方
+/// 悬浮岛屿面板尺寸常量：固定尺寸，内容在内部滚动，不做动态窗口高度
+/// （动态高度 + AppKit 约束动画在切换内容时触发约束异常崩溃，已废除）
 enum PanelMetrics {
-    static let width: CGFloat = 440
+    static let width: CGFloat = 520
+    static let height: CGFloat = 580
     static let gapBelowMenuBar: CGFloat = 6
     static let cornerRadius: CGFloat = 26
     static let animationDuration: TimeInterval = 0.45
-    static let collapsedHeight: CGFloat = 24
     /// 刘海悬停热区宽度（F1：约 240pt）
     static let hotZoneWidth: CGFloat = 240
 
@@ -24,11 +25,6 @@ enum PanelMetrics {
     static var menuBarHeight: CGFloat {
         guard let screen = NSScreen.screens.first else { return 37 }
         return max(24, screen.frame.maxY - screen.visibleFrame.maxY)
-    }
-
-    static var maxPanelHeight: CGFloat {
-        guard let screen = NSScreen.screens.first else { return 800 }
-        return screen.visibleFrame.height - 40
     }
 }
 
@@ -43,13 +39,12 @@ final class NotchWindowController: NSObject {
 
     /// 动画代数：快速连续切换时使旧的完成回调失效
     private var animationGeneration = 0
-    private var contentHeight: CGFloat = PanelMetrics.collapsedHeight
 
     func configure(with appModel: AppModel) {
         guard panel == nil, let screen = NSScreen.screens.first else { return }
         self.appModel = appModel
 
-        let panel = NSPanel(contentRect: frame(withHeight: PanelMetrics.collapsedHeight, on: screen),
+        let panel = NSPanel(contentRect: frame(on: screen),
                             styleMask: [.borderless, .nonactivatingPanel],
                             backing: .buffered,
                             defer: false)
@@ -92,9 +87,8 @@ final class NotchWindowController: NSObject {
         let generation = animationGeneration
         state = .expanding
 
-        // 从刘海下方的极小尺寸开始向下生长
         if let panel, let screen = NSScreen.screens.first {
-            panel.setFrame(frame(withHeight: PanelMetrics.collapsedHeight, on: screen), display: false)
+            panel.setFrame(frame(on: screen), display: false)
         }
         panel?.orderFrontRegardless()
         appModel.isExpanded = true
@@ -119,30 +113,14 @@ final class NotchWindowController: NSObject {
         }
     }
 
-    /// SwiftUI 内容高度变化 → 顶部固定、向下动画调整窗口高度
-    func updateContentHeight(_ height: CGFloat) {
-        guard let panel, let screen = NSScreen.screens.first,
-              state == .expanding || state == .expanded || state == .collapsing else { return }
-        let target = min(max(PanelMetrics.collapsedHeight, height), PanelMetrics.maxPanelHeight)
-        guard abs(target - contentHeight) > 0.5 else { return }
-        contentHeight = target
-
-        let newFrame = frame(withHeight: target, on: screen)
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.38
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            context.allowsImplicitAnimation = true
-            panel.animator().setFrame(newFrame, display: true)
-        }
-    }
-
     // MARK: - 坐标
 
-    private func frame(withHeight height: CGFloat, on screen: NSScreen) -> NSRect {
+    /// 固定尺寸窗口，顶部固定在菜单栏下方，不覆盖刘海/菜单栏
+    private func frame(on screen: NSScreen) -> NSRect {
         NSRect(x: screen.frame.midX - PanelMetrics.width / 2,
-               y: topY(on: screen) - height,
+               y: topY(on: screen) - PanelMetrics.height,
                width: PanelMetrics.width,
-               height: height)
+               height: PanelMetrics.height)
     }
 
     /// 面板顶边：菜单栏下方留 gap，不覆盖刘海/菜单栏
