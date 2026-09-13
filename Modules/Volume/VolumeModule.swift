@@ -24,6 +24,8 @@ final class VolumeModule: ObservableObject, NotchModule {
 
     func start() {
         guard pollTimer == nil else { return }
+        // 系统音量变化（含媒体键）即时推送；2 秒轮询仅作一致性兜底
+        AudioOutput.installListeners { [weak self] in self?.poll() }
         pollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.poll() }
         poll()
     }
@@ -35,6 +37,7 @@ final class VolumeModule: ObservableObject, NotchModule {
         pendingWrite?.cancel()
         pendingWrite = nil
         editing = false
+        AudioOutput.removeListeners()
     }
 
     func content() -> some View { VolumeView(module: self) }
@@ -100,9 +103,86 @@ private enum AudioOutput {
         var canMute = false
     }
 
+    // MARK: - 属性监听（即时反映媒体键/其他 App 的音量变化）
+
+    private static let listenerQueue = DispatchQueue(label: "com.notchdeck.volume.listener")
+    private static var onChangeHandler: (() -> Void)?
+    private static var listenedDevice: AudioDeviceID?
+    private static var systemListenerInstalled = false
+
+    private static let deviceChangedCallback: AudioObjectPropertyListenerBlock = { _, _ in
+        reinstallDeviceListeners()
+        notifyChange()
+    }
+    private static let propertyChangedCallback: AudioObjectPropertyListenerBlock = { _, _ in
+        notifyChange()
+    }
+
+    private static func notifyChange() {
+        DispatchQueue.main.async { onChangeHandler?() }
+    }
+
+    /// 注册默认输出设备与设备切换的属性监听；返回是否至少注册了设备切换监听
+    static func installListeners(onChange: @escaping () -> Void) -> Bool {
+        onChangeHandler = onChange
+        guard !systemListenerInstalled else { return true }
+        var systemAddress = address(kAudioHardwarePropertyDefaultOutputDevice, scope: kAudioObjectPropertyScopeGlobal)
+        let status = AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject),
+                                                         &systemAddress, listenerQueue, deviceChangedCallback)
+        guard status == noErr else { return false }
+        systemListenerInstalled = true
+        reinstallDeviceListeners()
+        return true
+    }
+
+    static func removeListeners() {
+        if let device = listenedDevice {
+            for var property in deviceListenerAddresses(device) {
+                AudioObjectRemovePropertyListenerBlock(device, &property, listenerQueue, propertyChangedCallback)
+            }
+            listenedDevice = nil
+        }
+        if systemListenerInstalled {
+            var systemAddress = address(kAudioHardwarePropertyDefaultOutputDevice, scope: kAudioObjectPropertyScopeGlobal)
+            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject),
+                                                   &systemAddress, listenerQueue, deviceChangedCallback)
+            systemListenerInstalled = false
+        }
+        onChangeHandler = nil
+    }
+
+    private static func deviceListenerAddresses(_ device: AudioDeviceID) -> [AudioObjectPropertyAddress] {
+        var addresses: [AudioObjectPropertyAddress] = [
+            address(kAudioDevicePropertyMute),
+        ]
+        for channel in volumeChannels(device) {
+            addresses.append(address(kAudioDevicePropertyVolumeScalar, element: channel))
+        }
+        return addresses
+    }
+
+    private static func reinstallDeviceListeners() {
+        if let old = listenedDevice {
+            for var property in deviceListenerAddresses(old) {
+                AudioObjectRemovePropertyListenerBlock(old, &property, listenerQueue, propertyChangedCallback)
+            }
+            listenedDevice = nil
+        }
+        guard let device = device() else { return }
+        var added = false
+        for var property in deviceListenerAddresses(device) where AudioObjectHasProperty(device, &property) {
+            if AudioObjectAddPropertyListenerBlock(device, &property, listenerQueue, propertyChangedCallback) == noErr {
+                added = true
+            }
+        }
+        if added { listenedDevice = device }
+    }
+
+    // MARK: - 读取与设置
+
     private static func address(_ selector: AudioObjectPropertySelector,
                                 element: AudioObjectPropertyElement = kAudioObjectPropertyElementMain,
-                                scope: AudioObjectPropertyScope = kAudioDevicePropertyScopeOutput) -> AudioObjectPropertyAddress {
+                                scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeOutput) -> AudioObjectPropertyAddress {
         AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: element)
     }
 

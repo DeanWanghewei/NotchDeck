@@ -60,12 +60,20 @@ final class MediaModule: ObservableObject, NotchModule {
     private var active = false
     private var refreshing = false
     private var generation = 0
+    /// 实验性：常驻事件流进程（stream --no-diff），曲目/进度变化即时推送
+    private var streamProcess: Process?
+    private var streamPipe: Pipe?
+    private var streamBuffer = Data()
+    private var streamStartedAt = Date.distantPast
+    private var streamRestartAttempts = 0
 
     deinit {
         pollTimer?.invalidate()
         cancellation?.cancel()
         artworkCancellation?.cancel()
         artworkTask?.cancel()
+        streamProcess?.terminationHandler = nil
+        streamProcess?.terminate()
     }
 
     func start() {
@@ -73,6 +81,17 @@ final class MediaModule: ObservableObject, NotchModule {
         active = true
         settingsSubscription = settings.$mediaSources.dropFirst().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.requestRefresh() }
+        settings.$experimentalNowPlaying.dropFirst().receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in
+                guard let self else { return }
+                if enabled {
+                    self.startStreamIfNeeded()
+                } else {
+                    self.stopStream()
+                }
+                self.requestRefresh()
+            }
+        if settings.experimentalNowPlaying { startStreamIfNeeded() }
         refresh()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.refresh()
@@ -82,6 +101,7 @@ final class MediaModule: ObservableObject, NotchModule {
     func stop() {
         active = false
         invalidateRefresh()
+        stopStream()
         pollTimer?.invalidate()
         pollTimer = nil
         settingsSubscription = nil
@@ -166,20 +186,15 @@ final class MediaModule: ObservableObject, NotchModule {
 
     func refresh() {
         guard active, !refreshing else { return }
-        // 实验性系统级检测优先：读取任意播放器的"正在播放"（飞牛/IINA/浏览器等）
+        // 实验性系统级检测：事件流常驻时由流推送驱动，无需轮询
         if settings.experimentalNowPlaying {
-            if experimentalAvailable, let paths = Self.adapterPaths {
-                refreshViaAdapter(paths)
-                return
-            }
-            // 不可用时每 60 秒重试一次探测
-            if !experimentalAvailable, Date().timeIntervalSince(lastAdapterFailure) > 60 {
+            if streamProcess != nil { return }
+            if experimentalAvailable {
+                if startStreamIfNeeded() { return }
+            } else if Date().timeIntervalSince(lastAdapterFailure) > 60 {
                 experimentalAvailable = true
                 adapterFailures = 0
-                if let paths = Self.adapterPaths {
-                    refreshViaAdapter(paths)
-                    return
-                }
+                if startStreamIfNeeded() { return }
             }
         }
         // 不向未运行的应用发送事件，避免后台轮询启动应用或弹出授权。
@@ -247,42 +262,102 @@ final class MediaModule: ObservableObject, NotchModule {
     }
 
     /// 经系统 Perl（com.apple.perl5，mediaremoted 仅信任 com.apple.* 客户端）读取系统正在播放
-    private func refreshViaAdapter(_ paths: (perl: String, script: String, framework: String)) {
-        refreshing = true
-        let version = generation
-        let token = Shell.Cancellation()
-        cancellation = token
-        scriptQueue.async { [weak self] in
-            let result = Shell.execute(paths.perl,
-                                       arguments: [paths.script, paths.framework, "get"],
-                                       timeout: 4, cancellation: token)
+    /// 启动常驻事件流（stream --no-diff）：曲目/进度变化即时推送 JSON 行；
+    /// 已在运行则直接返回 true；无法启动返回 false（调用方走失败处理）
+    @discardableResult
+    private func startStreamIfNeeded() -> Bool {
+        guard streamProcess == nil, active else { return streamProcess != nil }
+        guard let paths = Self.adapterPaths else {
+            handleAdapterFailure()
+            return false
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: paths.perl)
+        process.arguments = [paths.script, paths.framework, "stream", "--no-diff"]
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        streamBuffer = Data()
+        streamStartedAt = Date()
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                return
+            }
+            self?.consumeStreamData(data)
+        }
+        process.terminationHandler = { [weak self] terminatedProcess in
             DispatchQueue.main.async {
-                guard let self, self.active, self.generation == version else { return }
-                self.refreshing = false
-                self.cancellation = nil
-                guard result.completion == .exited(0),
-                      let json = (try? JSONSerialization.jsonObject(with: Data(result.output.utf8))) as? [String: Any] else {
-                    self.handleAdapterFailure()
-                    return
-                }
-                self.adapterFailures = 0
-                self.experimentalAvailable = true
-                let sampledAt = Date()
-                var chosen = Self.track(fromAdapterJSON: json)
-                if chosen != nil, chosen!.artworkKey == self.track?.artworkKey {
-                    chosen!.artwork = self.track?.artwork
-                }
-                if chosen != nil, chosen!.appName.isEmpty { chosen!.appName = "正在播放" }
-                self.trackViaAdapter = chosen != nil
-                if chosen != nil {
-                    self.trackUpdatedAt = sampledAt
-                    self.track = chosen
+                guard let self, self.streamProcess === terminatedProcess else { return }
+                // 稳定运行 30 秒后重置重启计数
+                if Date().timeIntervalSince(self.streamStartedAt) > 30 { self.streamRestartAttempts = 0 }
+                self.streamProcess = nil
+                self.streamPipe = nil
+                self.streamBuffer = Data()
+                guard self.active, self.settings.experimentalNowPlaying else { return }
+                self.streamRestartAttempts += 1
+                if self.streamRestartAttempts <= 5 {
+                    let delay = min(8.0, pow(2.0, Double(self.streamRestartAttempts)))
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.startStreamIfNeeded()
+                    }
                 } else {
-                    self.track = nil
-                    self.artworkKey = ""
-                    self.artworkTask?.cancel()
+                    self.experimentalAvailable = false
+                    self.lastAdapterFailure = Date()
                 }
             }
+        }
+        do {
+            try process.run()
+        } catch {
+            handleAdapterFailure()
+            return false
+        }
+        streamProcess = process
+        streamPipe = pipe
+        return true
+    }
+
+    private func stopStream() {
+        streamProcess?.terminationHandler = nil
+        streamPipe?.fileHandleForReading.readabilityHandler = nil
+        streamProcess?.terminate()
+        streamProcess = nil
+        streamPipe = nil
+        streamBuffer = Data()
+    }
+
+    /// 解析事件流行（按 \n 分帧），逐条派发主线程更新
+    private func consumeStreamData(_ data: Data) {
+        streamBuffer.append(data)
+        while let newline = streamBuffer.range(of: Data([0x0A])) {
+            let lineData = streamBuffer.subdata(in: streamBuffer.startIndex..<newline.lowerBound)
+            streamBuffer.removeSubrange(streamBuffer.startIndex...newline.lowerBound)
+            guard let json = (try? JSONSerialization.jsonObject(with: lineData)) as? [String: Any],
+                  let payload = json["payload"] as? [String: Any] else { continue }
+            let track = Self.track(fromAdapterJSON: payload)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.active, self.settings.experimentalNowPlaying else { return }
+                self.applyAdapterTrack(track)
+            }
+        }
+    }
+
+    /// 应用事件流推送的曲目状态（主线程）
+    private func applyAdapterTrack(_ incoming: MediaTrack?) {
+        var chosen = incoming
+        if chosen != nil, chosen!.artworkKey == track?.artworkKey { chosen!.artwork = track?.artwork }
+        if chosen != nil, chosen!.appName.isEmpty { chosen!.appName = "正在播放" }
+        trackViaAdapter = chosen != nil
+        if chosen != nil {
+            trackUpdatedAt = Date()
+            track = chosen
+        } else {
+            track = nil
+            artworkKey = ""
+            artworkTask?.cancel()
         }
     }
 

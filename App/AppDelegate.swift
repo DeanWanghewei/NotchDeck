@@ -50,19 +50,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.showSettingsWindow()
             }
         }
-        // 无需录屏权限的 UI 验证：把面板/设置窗口内容渲染成 PNG 落盘
+        // 无需录屏权限的 UI 验证：把面板/设置窗口内容渲染成 PNG 落盘（两个时刻，供时序验证）
         if arguments.contains("-NotchDeckDumpUI") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
-                self?.dumpUIToDisk()
+                self?.dumpUIToDisk(suffix: "")
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.2) { [weak self] in
+                self?.dumpUIToDisk(suffix: "2")
             }
         }
     }
 
     /// 渲染窗口内容到 /tmp/notchdeck-*.png（cacheDisplay 不需要屏幕录制权限）
-    private func dumpUIToDisk() {
-        dumpView(windowController.panelContentView, to: "/tmp/notchdeck-panel.png")
+    private func dumpUIToDisk(suffix: String) {
+        dumpView(windowController.panelContentView, to: "/tmp/notchdeck-panel\(suffix).png")
         if let settingsContentView = settingsWindow?.contentView {
-            dumpView(settingsContentView, to: "/tmp/notchdeck-settings.png")
+            dumpView(settingsContentView, to: "/tmp/notchdeck-settings\(suffix).png")
         }
     }
 
