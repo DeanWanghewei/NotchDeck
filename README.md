@@ -16,14 +16,19 @@
 | 模块 | 说明 |
 |---|---|
 | 媒体 | 封面/标题/进度/播放控制。媒体源由用户在设置中添加（Music / Spotify），**添加哪个才请求哪个的授权**，未安装的源不会出现在列表中 |
+| 应用 | 用户从**已安装应用选择器**中挑选常用 App 添加到面板：一键启动/退出、运行状态，白名单应用带"已适配"标记（当前适配 Music、Spotify）。零权限（NSWorkspace 实现） |
 | 音量 | 系统音量滑杆 + 静音切换，无需权限 |
 | 系统监控 | CPU、内存、磁盘使用率与网络速率，每秒刷新，悬停显示详细数值 |
 | Node 进程 | 监听端口的 Node.js 进程列表（端口/脚本/PID/CPU/内存），一键 SIGTERM，退出自动移除 |
 | 自定义 | 用户添加 shell 命令小部件（如 `ipconfig getifaddr en0`），面板展开时自动执行并展示输出 |
 
+### 已适配白名单
+`Core/ModuleFramework.swift` 中的 `AdaptedApps.whitelist` 记录已深度适配的 App（bundleID → 能力说明）。用户在选择器或设置中看到这些应用时，会显示"已适配"徽章，表示 NotchDeck 为其提供超出启动/退出的集成能力（如媒体播放控制）。扩展适配只需在白名单加一行并实现对应集成逻辑。
+
 ### 权限模型（默认最小权限）
-- 全新安装启动：**不发起任何 AppleScript、不申请任何权限**，面板完整可用（监控/Node/音量/自定义/交互）
+- 全新安装启动：**不发起任何 AppleScript、不申请任何权限**，面板完整可用（监控/Node/音量/应用/自定义/交互）
 - 媒体模块默认显示"未添加媒体源"引导；用户在设置中开启某个源后，**首次读取才触发该 App 的自动化授权弹窗**，仅此一次，拒绝也只影响该源
+- 应用快捷控制走 `NSWorkspace` / `NSRunningApplication`，启动/退出用户自己的应用**无需任何权限**
 - 悬停检测仅读取鼠标坐标（`NSEvent.mouseLocation`），无需辅助功能/输入监控权限
 
 ## 模块框架
@@ -83,7 +88,8 @@ NotchDeck/
 │   ├── SettingsStore.swift        # UserDefaults 封装（含模块配置）
 │   └── Shell.swift                # 外部命令执行（带超时）
 ├── Modules/
-│   ├── Media/                     # 媒体：MediaRemote 桥接（探测式）+ AppleScript
+│   ├── Media/                     # 媒体：源注册表 + AppleScript（按需授权）
+│   ├── Apps/                      # 应用快捷控制 + 已安装应用扫描
 │   ├── Volume/                    # 音量：StandardAdditions 脚本
 │   ├── System/                    # 系统监控：host_statistics64 / sysctl / getifaddrs
 │   ├── Node/                      # Node 进程：lsof / ps / kill(SIGTERM)

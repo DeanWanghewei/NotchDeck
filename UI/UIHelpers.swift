@@ -42,6 +42,23 @@ struct BottomRoundedRectangle: Shape {
     }
 }
 
+/// "已适配"标记：白名单 App 专用徽章
+struct AdaptedBadge: View {
+    var body: some View {
+        HStack(spacing: 2) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 8))
+            Text("已适配")
+                .font(.system(size: 9, weight: .medium))
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1.5)
+        .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+        .foregroundStyle(Color.accentColor)
+        .help("该应用已深度适配 NotchDeck（如媒体控制等能力）")
+    }
+}
+
 /// 按压缩放反馈的图标按钮样式
 struct ScalingButtonStyle: ButtonStyle {
     var pressedScale: CGFloat = 0.85

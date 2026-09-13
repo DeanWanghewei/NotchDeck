@@ -2,12 +2,18 @@ import Carbon.HIToolbox
 import ServiceManagement
 import SwiftUI
 
-/// 设置面板：模块管理、自定义子项、触发行为、快捷键、通用
+/// 设置面板：媒体源、应用快捷控制、模块管理、自定义子项、触发行为、快捷键、通用
 struct SettingsView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var isRecordingHotKey = false
-    @State private var isShowingAddItem = false
+    @State private var activeSheet: ActiveSheet?
+
+    private enum ActiveSheet: Identifiable {
+        case addItem
+        case appPicker
+        var id: Int { hashValue }
+    }
 
     var body: some View {
         Form {
@@ -20,7 +26,10 @@ struct SettingsView: View {
                 } else {
                     ForEach(installed, id: \.bundleID) { source in
                         Toggle(isOn: mediaSourceBinding(source)) {
-                            Label(source.displayName, systemImage: source.symbol)
+                            HStack(spacing: 6) {
+                                Label(source.displayName, systemImage: source.symbol)
+                                AdaptedBadge()
+                            }
                         }
                     }
                     let notInstalled = MediaModule.knownSources.filter { source in
@@ -35,6 +44,39 @@ struct SettingsView: View {
                 Text("默认不申请任何权限。开启某个媒体源后，首次读取会请求该 App 的自动化授权，仅此一次。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("应用快捷控制") {
+                if settings.panelApps.isEmpty {
+                    Text("从已安装应用中挑选常用 App 添加到面板，一键启动 / 退出、查看运行状态。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(settings.panelApps) { app in
+                        HStack {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: app.path))
+                                .resizable()
+                                .frame(width: 18, height: 18)
+                            Text(app.name)
+                            if AdaptedApps.isAdapted(app.bundleID) {
+                                AdaptedBadge()
+                            }
+                            Spacer()
+                            Button {
+                                settings.panelApps.removeAll { $0.id == app.id }
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 11))
+                            }
+                            .buttonStyle(ScalingButtonStyle())
+                            .foregroundStyle(.secondary)
+                            .help("从面板移除")
+                        }
+                    }
+                }
+                Button("添加应用…") {
+                    activeSheet = .appPicker
+                }
             }
 
             Section("模块管理") {
@@ -57,7 +99,7 @@ struct SettingsView: View {
                     }
                 }
                 Button("添加子项…") {
-                    isShowingAddItem = true
+                    activeSheet = .addItem
                 }
             }
 
@@ -110,9 +152,14 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 700)
-        .sheet(isPresented: $isShowingAddItem) {
-            CustomItemEditView()
+        .frame(width: 460, height: 760)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .addItem:
+                CustomItemEditView()
+            case .appPicker:
+                AppPickerSheet()
+            }
         }
     }
     // MARK: - 媒体源绑定

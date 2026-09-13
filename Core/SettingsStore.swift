@@ -50,6 +50,10 @@ final class SettingsStore: ObservableObject {
     @Published var mediaSources: [String] {
         didSet { defaults.set(mediaSources, forKey: Keys.mediaSources) }
     }
+    /// 用户添加到面板的应用
+    @Published var panelApps: [PanelApp] {
+        didSet { persist(panelApps, forKey: Keys.panelApps) }
+    }
 
     private let defaults: UserDefaults
 
@@ -63,12 +67,14 @@ final class SettingsStore: ObservableObject {
         static let moduleConfigs = "settings.moduleConfigs"
         static let customItems = "settings.customItems"
         static let mediaSources = "settings.mediaSources"
+        static let panelApps = "settings.panelApps"
     }
 
     /// 各模块的默认布局
     static let moduleConfigDefaults: [String: ModuleConfig] = [
         "media": ModuleConfig(enabled: true, pinned: true),
         "volume": ModuleConfig(enabled: true, pinned: true),
+        "apps": ModuleConfig(enabled: true, pinned: false),
         "system": ModuleConfig(enabled: true, pinned: false),
         "node": ModuleConfig(enabled: true, pinned: false),
         "custom": ModuleConfig(enabled: true, pinned: false),
@@ -89,6 +95,7 @@ final class SettingsStore: ObservableObject {
         moduleConfigs = Self.decode([String: ModuleConfig].self, forKey: Keys.moduleConfigs, defaults: defaults) ?? [:]
         customItems = Self.decode([CustomItem].self, forKey: Keys.customItems, defaults: defaults) ?? []
         mediaSources = defaults.stringArray(forKey: Keys.mediaSources) ?? []
+        panelApps = Self.decode([PanelApp].self, forKey: Keys.panelApps, defaults: defaults) ?? []
     }
 
     // MARK: - 模块配置

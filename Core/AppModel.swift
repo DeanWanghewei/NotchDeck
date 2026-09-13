@@ -29,6 +29,7 @@ final class AppModel: ObservableObject {
     let node = NodeProcessScanner()
     let volume = VolumeModule()
     let custom = CustomItemsModule()
+    let apps = AppLauncherModule()
 
     private var cancellables: Set<AnyCancellable> = []
 
@@ -38,9 +39,11 @@ final class AppModel: ObservableObject {
         node.start()
         volume.start()
         custom.start()
+        apps.start()
 
         registry.register(media)
         registry.register(volume)
+        registry.register(apps)
         registry.register(system)
         registry.register(node)
         registry.register(custom)
