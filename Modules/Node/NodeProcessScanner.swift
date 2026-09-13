@@ -133,22 +133,27 @@ final class NodeProcessScanner: ObservableObject {
             comm.hasPrefix("/sbin/")
     }
 
-    /// 展示名优先级：App 包名（如 企业微信、IntelliJ IDEA）> 脚本/模块名（如 server.js、hermes_cli.main）> 可执行文件名
+    /// 展示名优先级：App 包名（如 企业微信、IntelliJ IDEA）> 脚本/模块名（如 server.js、hermes_cli.main）> 可执行文件名。
+    /// 第一个非 flag 参数若是裸词（无扩展名无路径，如 start/serve/run），那是子命令而非文件，
+    /// 看不出身份，此时回退到可执行文件名（如 Lingma）
     private static func displayName(for commandLine: String, comm: String) -> String {
         if let bundleName = appBundleName(from: comm) {
             return bundleName
         }
         let tokens = commandLine.split(separator: " ").map(String.init)
+        let commName = (comm as NSString).lastPathComponent
         for token in tokens.dropFirst() {
             if token.hasPrefix("-") { continue }
+            if !token.contains("/") && !token.contains(".") {
+                break // 裸子命令，不可读
+            }
             return (token as NSString).lastPathComponent
         }
-        let fromCommand = tokens.first.map { ($0 as NSString).lastPathComponent }
-        if let fromCommand, !fromCommand.isEmpty {
+        if let fromCommand = tokens.first.map({ ($0 as NSString).lastPathComponent }),
+           !fromCommand.isEmpty, fromCommand != commName {
             return fromCommand
         }
-        let fromComm = (comm as NSString).lastPathComponent
-        return fromComm.isEmpty ? "进程" : fromComm
+        return commName.isEmpty ? "进程" : commName
     }
 
     /// 取最内层 .app 包名：/Applications/Hermes.app/.../Hermes Helper.app/... → "Hermes Helper"
