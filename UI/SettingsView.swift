@@ -162,6 +162,7 @@ struct SettingsView: View {
 
     // MARK: - 进程监控页
 
+    @ViewBuilder
     private var processSection: some View {
         Section("进程监控") {
             Picker("展示方式", selection: $settings.processDisplay) {
@@ -174,6 +175,29 @@ struct SettingsView: View {
             Toggle("显示 App 进程占用的端口", isOn: $settings.showAppProcesses)
             Toggle("显示脚本进程占用的端口（node / python / java 等）", isOn: $settings.showScriptProcesses)
             Text("列出当前用户所有监听 TCP 端口的进程（系统守护进程除外），可一键结束（SIGTERM）。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        Section("系统监控显示") {
+            Toggle("CPU 近 15 分钟热力图", isOn: $settings.showCPUHeatmap)
+            Toggle("交换内存（swap）", isOn: $settings.showSwap)
+            Toggle("电池（电量 / 容量 / 循环次数）", isOn: $settings.showBattery)
+            HStack {
+                Toggle("风扇转速", isOn: .constant(false))
+                    .disabled(true)
+                Text("此系统不提供")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            HStack {
+                Toggle("GPU 使用率", isOn: .constant(false))
+                    .disabled(true)
+                Text("此系统不提供")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Text("GPU 与风扇需要系统提供的统计接口，当前 macOS 版本已移除，相关选项暂不可用。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

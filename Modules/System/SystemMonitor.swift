@@ -11,11 +11,21 @@ struct SystemStats {
     var diskTotal: UInt64 = 0       // bytes
     var networkUpload: Double = 0   // bytes/s
     var networkDownload: Double = 0 // bytes/s
+    var swapUsed: UInt64 = 0        // bytes
+    var swapTotal: UInt64 = 0       // bytes
+    var battery: BatteryAndSwap.BatteryInfo?
+    /// 近 15 分钟 CPU 历史（每秒 1 个样本，最多 900 个）
+    var cpuHistory: [Double] = []
 }
 
-/// CPU / 内存 / 磁盘 / 网络监控，每秒刷新（原生 API：host_statistics / host_statistics64 + sysctl）
+/// CPU / 内存 / 磁盘 / 网络 / 交换内存 / 电池监控，每秒刷新
+/// （host_statistics + sysctl NET_RT_IFLIST2 + IOKit 电源注册表）
 final class SystemMonitor: ObservableObject {
     @Published private(set) var stats = SystemStats()
+    /// GPU 使用率需要 IOReport 私有框架，macOS 15+ 已对用户态移除（探针实证），当前恒为不可用
+    static let gpuAvailable = false
+    /// 经典 SMC 用户客户端协议在当前系统已失效（探针实证），风扇转速暂不可用
+    static let fansAvailable = false
 
     private var timer: Timer?
     private let queue = DispatchQueue(label: "com.notchdeck.system", qos: .utility)
@@ -71,7 +81,23 @@ private final class SystemSampler {
         (value.diskUsed, value.diskTotal) = sampleDisk()
         let rate = networkSample.update(Self.networkCounters(), at: ProcessInfo.processInfo.systemUptime)
         (value.networkUpload, value.networkDownload) = (rate.up, rate.down)
+        let swap = BatteryAndSwap.readSwap()
+        value.swapUsed = swap.usedBytes
+        value.swapTotal = swap.totalBytes
+        value.battery = BatteryAndSwap.readBattery()
+        value.cpuHistory = Self.appendCpuHistory(value.cpuUsage, to: &cpuHistory)
         return value
+    }
+
+    /// 近 15 分钟历史（900 个样本，超出即淘汰最旧）
+    private var cpuHistory: [Double] = []
+    private static let historyLimit = 900
+    static func appendCpuHistory(_ usage: Double, to history: inout [Double]) -> [Double] {
+        history.append(usage)
+        if history.count > historyLimit {
+            history.removeFirst(history.count - historyLimit)
+        }
+        return history
     }
 
     // MARK: - CPU（host_statistics64 HOST_CPU_LOAD_INFO 差分）

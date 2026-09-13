@@ -66,6 +66,18 @@ final class SettingsStore: ObservableObject {
     @Published var showScriptProcesses: Bool {
         didSet { defaults.set(showScriptProcesses, forKey: Keys.showScriptProcesses) }
     }
+    /// 系统监控：CPU 近 15 分钟热力图
+    @Published var showCPUHeatmap: Bool {
+        didSet { defaults.set(showCPUHeatmap, forKey: Keys.showCPUHeatmap) }
+    }
+    /// 系统监控：交换内存
+    @Published var showSwap: Bool {
+        didSet { defaults.set(showSwap, forKey: Keys.showSwap) }
+    }
+    /// 系统监控：电池
+    @Published var showBattery: Bool {
+        didSet { defaults.set(showBattery, forKey: Keys.showBattery) }
+    }
 
     private let defaults: UserDefaults
     private var updatingHotKey = false
@@ -97,6 +109,9 @@ final class SettingsStore: ObservableObject {
         static let processDisplay = "settings.processDisplay"
         static let showAppProcesses = "settings.showAppProcesses"
         static let showScriptProcesses = "settings.showScriptProcesses"
+        static let showCPUHeatmap = "settings.showCPUHeatmap"
+        static let showSwap = "settings.showSwap"
+        static let showBattery = "settings.showBattery"
     }
 
     /// 各模块的默认布局
@@ -130,6 +145,9 @@ final class SettingsStore: ObservableObject {
         processDisplay = defaults.string(forKey: Keys.processDisplay) ?? "grid"
         showAppProcesses = defaults.object(forKey: Keys.showAppProcesses) as? Bool ?? true
         showScriptProcesses = defaults.object(forKey: Keys.showScriptProcesses) as? Bool ?? true
+        showCPUHeatmap = defaults.object(forKey: Keys.showCPUHeatmap) as? Bool ?? true
+        showSwap = defaults.object(forKey: Keys.showSwap) as? Bool ?? true
+        showBattery = defaults.object(forKey: Keys.showBattery) as? Bool ?? true
     }
 
     // MARK: - 模块配置
