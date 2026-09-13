@@ -19,7 +19,8 @@ final class SystemMonitor: ObservableObject {
 
     private var timer: Timer?
     private var previousCPUTicks: (idle: UInt64, total: UInt64)?
-    private var previousNetwork: (up: UInt64, down: UInt64)?
+    /// 每个接口的上次计数（AF_LINK 的 if_data 字节计数是 32 位，需按接口做回绕安全差分）
+    private var previousNetwork: [String: (inBytes: UInt32, outBytes: UInt32)] = [:]
     private var totalMemory: UInt64 = 0
 
     func start() {
@@ -114,40 +115,45 @@ final class SystemMonitor: ObservableObject {
         return (totalValue > freeValue ? totalValue - freeValue : 0, totalValue)
     }
 
-    // MARK: - 网络（getifaddrs 计数差分，排除回环接口）
+    // MARK: - 网络（getifaddrs AF_LINK 计数差分，排除回环接口）
 
+    /// macOOS 的 getifaddrs：流量计数只挂在 AF_LINK 条目的 if_data 上，
+    /// AF_INET/AF_INET6 条目的 ifa_data 为 nil
     private func sampleNetwork() -> (up: Double, down: Double) {
         let counters = Self.networkCounters()
         defer { previousNetwork = counters }
-        guard let previous = previousNetwork else { return (0, 0) }
-        let upload = Double(counters.up &- previous.up)
-        let download = Double(counters.down &- previous.down)
-        return (max(0, upload), max(0, download))
+        guard !previousNetwork.isEmpty else { return (0, 0) }
+
+        var up = 0.0
+        var down = 0.0
+        for (name, current) in counters {
+            guard let previous = previousNetwork[name] else { continue }
+            // UInt32 回绕安全差分（计数每 4GB 归零一次）
+            down += Double(current.inBytes &- previous.inBytes)
+            up += Double(current.outBytes &- previous.outBytes)
+        }
+        return (up, down)
     }
 
-    private static func networkCounters() -> (up: UInt64, down: UInt64) {
+    private static func networkCounters() -> [String: (inBytes: UInt32, outBytes: UInt32)] {
         var interfaceList: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&interfaceList) == 0, let first = interfaceList else { return (0, 0) }
+        guard getifaddrs(&interfaceList) == 0, let first = interfaceList else { return [:] }
         defer { freeifaddrs(interfaceList) }
 
-        var up: UInt64 = 0
-        var down: UInt64 = 0
+        var result: [String: (UInt32, UInt32)] = [:]
         var cursor: UnsafeMutablePointer<ifaddrs>? = first
         while let current = cursor {
             let interface = current.pointee
-            defer { cursor = interface.ifa_next }
+            cursor = interface.ifa_next
 
-            guard let sockaddr = interface.ifa_addr else { continue }
-            let family = sockaddr.pointee.sa_family
-            guard family == UInt8(AF_INET) || family == UInt8(AF_INET6) else { continue }
-            guard String(cString: interface.ifa_name) != "lo0" else { continue }
-            guard let dataPointer = interface.ifa_data else { continue }
-
+            guard let sockaddr = interface.ifa_addr,
+                  sockaddr.pointee.sa_family == UInt8(AF_LINK) else { continue }
+            let name = String(cString: interface.ifa_name)
+            guard name != "lo0", let dataPointer = interface.ifa_data else { continue }
             let data = dataPointer.assumingMemoryBound(to: if_data.self).pointee
-            down += UInt64(data.ifi_ibytes)
-            up += UInt64(data.ifi_obytes)
+            result[name] = (data.ifi_ibytes, data.ifi_obytes)
         }
-        return (up, down)
+        return result
     }
 }
 
