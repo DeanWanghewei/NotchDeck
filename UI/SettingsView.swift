@@ -86,6 +86,42 @@ struct SettingsView: View {
             .onChange(of: settings.experimentalNowPlaying) { _ in
                 AppModel.shared.media.requestRefresh()
             }
+
+            // 系统兼容性信息
+            LabeledContent("当前系统") {
+                Text(SystemCompat.currentDescription)
+                    .monospacedDigit()
+            }
+            LabeledContent("适配状态") {
+                switch SystemCompat.adaptation {
+                case .verified:
+                    Label("已实测适配", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                case .untested:
+                    Label("机制可用，此版本未经实测", systemImage: "questionmark.circle")
+                        .foregroundStyle(.secondary)
+                case .unsupported:
+                    Label("机制不可用（需 macOS 15.4+）", systemImage: "xmark.circle")
+                        .foregroundStyle(.orange)
+                }
+            }
+            LabeledContent("运行状态") {
+                let media = AppModel.shared.media
+                if !settings.experimentalNowPlaying {
+                    Text("未开启").foregroundStyle(.secondary)
+                } else if media.experimentalAvailable {
+                    Label("运行正常", systemImage: "circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    Label("失败中，每 60 秒自动重试", systemImage: "arrow.clockwise.circle")
+                        .foregroundStyle(.orange)
+                }
+            }
+            LabeledContent("支持范围") {
+                Text("macOS 15.4+（更早版本自动回退手动媒体源）")
+                    .foregroundStyle(.secondary)
+            }
+
             let installed = MediaModule.installedSources
             if installed.isEmpty {
                 Text("未检测到受支持的媒体 App（Music / Spotify）")
