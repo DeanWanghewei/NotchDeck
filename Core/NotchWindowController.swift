@@ -73,6 +73,11 @@ final class NotchWindowController: NSObject {
         panel?.frame ?? .zero
     }
 
+    /// UI 调试用：面板内容视图（配合 -NotchDeckDumpUI 导出渲染图）
+    var panelContentView: NSView? {
+        panel?.contentView
+    }
+
     func toggle() {
         if state == .collapsed || state == .collapsing {
             expand()

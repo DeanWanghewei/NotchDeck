@@ -12,10 +12,6 @@ struct NodeListView: View {
         }
     }
 
-    /// 固定视口高度：块状 3 行 / 列表 8 行，确定值避免布局反馈
-    private var viewportHeight: CGFloat {
-        settings.processDisplay == "grid" ? 3 * cardHeight + 2 * 10 : 8 * rowHeight + 7 * 2
-    }
     private let cardHeight: CGFloat = 96
     private let rowHeight: CGFloat = 34
 
@@ -26,6 +22,7 @@ struct NodeListView: View {
                 emptyState
                     .frame(maxWidth: .infinity, minHeight: 96)
             } else {
+                // 固定尺寸窗口内可安全撑满剩余空间（无动态窗口高度反馈）
                 ScrollView(.vertical, showsIndicators: true) {
                     Group {
                         if settings.processDisplay == "grid" {
@@ -36,7 +33,7 @@ struct NodeListView: View {
                     }
                     .padding(1)
                 }
-                .frame(height: viewportHeight)
+                .frame(maxHeight: .infinity)
             }
         }
     }
@@ -51,7 +48,7 @@ struct NodeListView: View {
             Text("监听端口")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("\(filtered.count)")
+            Text(verbatim: "\(filtered.count)")
                 .font(.caption2.weight(.medium))
                 .monospacedDigit()
                 .padding(.horizontal, 7)
@@ -63,7 +60,8 @@ struct NodeListView: View {
                 Image(systemName: "list.bullet").tag("list").help("列表展示")
             }
             .pickerStyle(.segmented)
-            .frame(width: 72)
+            .labelsHidden()
+            .frame(width: 64)
             .controlSize(.mini)
         }
     }
@@ -84,7 +82,7 @@ struct NodeListView: View {
     private func card(_ process: NodeProcessInfo) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .top, spacing: 5) {
-                Text(":\(process.port)")
+                Text(verbatim: ":\(process.port)")
                     .font(.system(size: 15, weight: .bold).monospaced())
                     .foregroundStyle(.blue)
                     .lineLimit(1)
@@ -142,7 +140,7 @@ struct NodeListView: View {
 
     private func row(_ process: NodeProcessInfo) -> some View {
         HStack(spacing: 10) {
-            Text(":\(process.port)")
+            Text(verbatim: ":\(process.port)")
                 .font(.system(size: 11, weight: .semibold).monospaced())
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
@@ -163,7 +161,7 @@ struct NodeListView: View {
                             .foregroundStyle(.orange)
                     }
                 }
-                Text("PID \(process.pid) · \(process.executableName)")
+                Text(verbatim: "PID \(process.pid) · \(process.executableName)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

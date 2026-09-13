@@ -29,6 +29,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                name: AppModel.openSettingsRequest, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(quitApp),
                                                name: AppModel.quitRequest, object: nil)
+
+        // UI 调试/自动化验证用：-NotchDeckShowPanel 启动即展开面板，-NotchDeckShowSettings 同时打开设置，
+        // -NotchDeckTab <id> 指定选中标签页
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-NotchDeckShowPanel") || arguments.contains("-NotchDeckShowSettings") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.windowController.expand()
+            }
+        }
+        if let tabFlagIndex = arguments.firstIndex(of: "-NotchDeckTab"),
+           arguments.indices.contains(tabFlagIndex + 1) {
+            let tabID = arguments[tabFlagIndex + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                AppModel.shared.activeTabID = tabID
+            }
+        }
+        if arguments.contains("-NotchDeckShowSettings") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
+                self?.showSettingsWindow()
+            }
+        }
+        // 无需录屏权限的 UI 验证：把面板/设置窗口内容渲染成 PNG 落盘
+        if arguments.contains("-NotchDeckDumpUI") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+                self?.dumpUIToDisk()
+            }
+        }
+    }
+
+    /// 渲染窗口内容到 /tmp/notchdeck-*.png（cacheDisplay 不需要屏幕录制权限）
+    private func dumpUIToDisk() {
+        dumpView(windowController.panelContentView, to: "/tmp/notchdeck-panel.png")
+        if let settingsContentView = settingsWindow?.contentView {
+            dumpView(settingsContentView, to: "/tmp/notchdeck-settings.png")
+        }
+    }
+
+    private func dumpView(_ view: NSView?, to path: String) {
+        guard let view else { return }
+        let bounds = view.bounds
+        guard bounds.width > 0, bounds.height > 0,
+              let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                         pixelsWide: Int(bounds.width * 2),
+                                         pixelsHigh: Int(bounds.height * 2),
+                                         bitsPerSample: 8,
+                                         samplesPerPixel: 4,
+                                         hasAlpha: true,
+                                         isPlanar: false,
+                                         colorSpaceName: .deviceRGB,
+                                         bytesPerRow: 0,
+                                         bitsPerPixel: 0) else { return }
+        rep.size = bounds.size
+        view.cacheDisplay(in: bounds, to: rep)
+        if let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+            NSLog("NotchDeck UI dump: \(path)")
+        }
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {

@@ -99,7 +99,8 @@ enum ByteFormat {
     }
 
     static func rate(_ bytesPerSecond: Double) -> String {
-        formatter.string(fromByteCount: Int64(max(0, bytesPerSecond))) + "/s"
+        guard bytesPerSecond > 0 else { return "0 KB/s" }
+        return formatter.string(fromByteCount: Int64(bytesPerSecond)) + "/s"
     }
 
     static func percent(_ fraction: Double) -> String {

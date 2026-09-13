@@ -228,6 +228,7 @@ private struct ModuleConfigRow: View {
                     Text("切换").tag(false)
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
                 .frame(width: 110)
                 .disabled(!enabled)
             }
