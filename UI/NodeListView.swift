@@ -51,9 +51,12 @@ struct NodeListView: View {
             Image(systemName: "terminal")
                 .font(.title3)
                 .foregroundStyle(.secondary)
-            Text("未发现监听端口的 Node.js 进程")
+            Text("未发现匹配关键词的监听进程")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Text("关键词匹配进程的可执行文件路径，可在设置中调整")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 
