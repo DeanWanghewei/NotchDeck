@@ -151,6 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.title = "NotchDeck 设置"
             window.isReleasedWhenClosed = false
             window.level = .floating
+            // 全屏应用所在 Space 也能呼出
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             window.minSize = NSSize(width: 560, height: 460)
             window.contentView = NSHostingView(rootView: SettingsView())
             settingsWindow = window
