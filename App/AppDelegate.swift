@@ -144,13 +144,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showSettingsWindow() {
         if settingsWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 620),
-                styleMask: [.titled, .closable, .miniaturizable],
+                contentRect: NSRect(x: 0, y: 0, width: 720, height: 560),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false)
             window.title = "NotchDeck 设置"
             window.isReleasedWhenClosed = false
             window.level = .floating
+            window.minSize = NSSize(width: 560, height: 460)
             window.contentView = NSHostingView(rootView: SettingsView())
             settingsWindow = window
         }

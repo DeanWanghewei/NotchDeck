@@ -59,7 +59,7 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
         }
-        .frame(width: 460, height: 600)
+        .frame(minWidth: 560, minHeight: 460)
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
             case .addItem:
