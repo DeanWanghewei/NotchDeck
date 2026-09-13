@@ -134,26 +134,44 @@ final class NodeProcessScanner: ObservableObject {
     }
 
     /// 展示名优先级：App 包名（如 企业微信、IntelliJ IDEA）> 脚本/模块名（如 server.js、hermes_cli.main）> 可执行文件名。
-    /// 第一个非 flag 参数若是裸词（无扩展名无路径，如 start/serve/run），那是子命令而非文件，
-    /// 看不出身份，此时回退到可执行文件名（如 Lingma）
+    /// - `-m 模块` 调用时（python -m pkg.mod gateway run），紧随的裸词子命令拼入展示名以区分实例
+    /// - 第一个非 flag 参数若是裸词（无扩展名无路径，如 start/serve/run），那是子命令而非文件，
+    ///   看不出身份，此时回退到可执行文件名（如 Lingma）
     private static func displayName(for commandLine: String, comm: String) -> String {
         if let bundleName = appBundleName(from: comm) {
             return bundleName
         }
         let tokens = commandLine.split(separator: " ").map(String.init)
         let commName = (comm as NSString).lastPathComponent
-        for token in tokens.dropFirst() {
-            if token.hasPrefix("-") { continue }
-            if !token.contains("/") && !token.contains(".") {
-                break // 裸子命令，不可读
+
+        var scriptIsModule = false
+        var scriptIndex: Int?
+        var cursor = 1
+        while cursor < tokens.count {
+            let token = tokens[cursor]
+            if token == "-m" {
+                scriptIsModule = true
+            } else if !token.hasPrefix("-") {
+                scriptIndex = cursor
+                break
             }
-            return (token as NSString).lastPathComponent
+            cursor += 1
         }
-        if let fromCommand = tokens.first.map({ ($0 as NSString).lastPathComponent }),
-           !fromCommand.isEmpty, fromCommand != commName {
-            return fromCommand
+        guard let scriptIndex, let script = tokens[safe: scriptIndex] else {
+            return commName.isEmpty ? "进程" : commName
         }
-        return commName.isEmpty ? "进程" : commName
+        // 裸词子命令（如 `Lingma start`）不可读，回退可执行名
+        guard script.contains("/") || script.contains(".") else {
+            return commName.isEmpty ? "进程" : commName
+        }
+
+        var name = (script as NSString).lastPathComponent
+        if scriptIsModule, let sub = tokens[safe: scriptIndex + 1],
+           let first = sub.first, first.isLetter {
+            // python -m pkg.mod gateway run → "pkg.mod gateway"
+            name += " " + sub
+        }
+        return name
     }
 
     /// 取最内层 .app 包名：/Applications/Hermes.app/.../Hermes Helper.app/... → "Hermes Helper"
@@ -167,6 +185,12 @@ final class NodeProcessScanner: ObservableObject {
 }
 
 // MARK: - 面板模块接入
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
 
 extension NodeProcessScanner: NotchModule {
     var id: String { "node" }
