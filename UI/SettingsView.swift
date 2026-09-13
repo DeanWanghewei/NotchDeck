@@ -363,6 +363,15 @@ private struct ModuleConfigRow: View {
         settings.config(for: box.id).enabled
     }
 
+    /// 模块不可用时的具体原因（按模块给出该添加什么）
+    private var unavailableHint: String {
+        switch box.id {
+        case "apps": return "未添加应用"
+        case "custom": return "未添加子项"
+        default: return "未添加内容"
+        }
+    }
+
     var body: some View {
         HStack {
             Toggle(isOn: Binding(
@@ -374,9 +383,10 @@ private struct ModuleConfigRow: View {
             }
             Spacer()
             if !box.isAvailable() {
-                Text("暂不可用")
+                Text(unavailableHint)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .help("在设置对应区块添加内容后，此模块即可用")
             } else {
                 Picker("位置", selection: Binding(
                     get: { settings.config(for: box.id).pinned },
