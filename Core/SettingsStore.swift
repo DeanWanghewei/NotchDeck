@@ -114,7 +114,7 @@ final class SettingsStore: ObservableObject {
         hoverEnabled = defaults.object(forKey: Keys.hoverEnabled) as? Bool ?? true
         hoverDelay = defaults.object(forKey: Keys.hoverDelay) as? Double ?? 0.2
         collapseEnabled = defaults.object(forKey: Keys.collapseEnabled) as? Bool ?? true
-        collapseDelay = defaults.object(forKey: Keys.collapseDelay) as? Double ?? 1.0
+        collapseDelay = defaults.object(forKey: Keys.collapseDelay) as? Double ?? 0.5
 
         let storedKeyCode = defaults.object(forKey: Keys.hotKeyCode) as? Int
         hotKeyCode = storedKeyCode.flatMap { (0...127).contains($0) ? UInt32($0) : nil }

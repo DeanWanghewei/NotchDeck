@@ -115,7 +115,7 @@ struct NodeListView: View {
                 .lineLimit(1)
                 .help(process.displayName)
             HStack(spacing: 6) {
-                Label(String(format: "%.0f%%", process.cpuPercent), systemImage: "cpu")
+                Label(String(format: "%.1f%%", process.cpuPercent), systemImage: "cpu")
                 Label(String(format: "%.0fM", process.memoryMB), systemImage: "memorychip")
             }
             .font(.system(size: 9))
