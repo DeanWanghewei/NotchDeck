@@ -278,6 +278,17 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var generalSections: some View {
+        Section("面板") {
+            Toggle(isOn: $settings.notchAttached) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("与刘海接壤（视觉一体）")
+                    Text("面板顶部与刘海相连，覆盖菜单栏中央形成整体；关闭则悬浮于菜单栏下方")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+
         Section("触发") {
             Toggle("悬停刘海自动展开", isOn: $settings.hoverEnabled)
             if settings.hoverEnabled {

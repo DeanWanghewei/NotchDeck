@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+/// 仅底部圆角：接壤模式下与刘海延伸带连成一体（macOS 13+ 内建 UnevenRoundedRectangle）
+func bottomRoundedRectangle(radius: CGFloat) -> UnevenRoundedRectangle {
+    UnevenRoundedRectangle(topLeadingRadius: 0,
+                           bottomLeadingRadius: radius,
+                           bottomTrailingRadius: radius,
+                           topTrailingRadius: 0,
+                           style: .continuous)
+}
+
 /// 毛玻璃背景（NSVisualEffectView，behindWindow 混合）
 struct VisualEffectBackground: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .hudWindow

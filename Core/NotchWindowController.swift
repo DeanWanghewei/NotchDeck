@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// 面板状态机（见需求文档 6.3）：
@@ -28,6 +29,12 @@ enum PanelMetrics {
 
     static func menuBarHeight(on screen: NSScreen) -> CGFloat {
         max(24, screen.safeAreaInsets.top, screen.frame.maxY - screen.visibleFrame.maxY)
+    }
+
+    /// 目标屏的菜单栏高度（SwiftUI 侧使用）
+    static var menuBarHeight: CGFloat {
+        guard let screen = targetScreen else { return 37 }
+        return menuBarHeight(on: screen)
     }
 }
 
@@ -69,6 +76,19 @@ final class NotchWindowController: NSObject {
                                                object: nil, queue: .main) { [weak self] _ in
             self?.reposition()
         }
+        // 接壤开关切换时立即重排窗口
+        settingsSubscription = SettingsStore.shared.$notchAttached
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refreshFrame() }
+    }
+
+    private var settingsSubscription: AnyCancellable?
+
+    /// 按当前配置重排窗口（收起状态下也生效，切换配置无感）
+    private func refreshFrame() {
+        guard let panel, let screen = PanelMetrics.targetScreen else { return }
+        panel.setFrame(frame(on: screen), display: true)
     }
 
     /// 当前面板 frame（鼠标离开检测用）
@@ -123,12 +143,17 @@ final class NotchWindowController: NSObject {
 
     // MARK: - 坐标
 
-    /// 固定尺寸窗口，顶部固定在菜单栏下方，不覆盖刘海/菜单栏
+    /// 固定尺寸窗口。悬浮模式：顶部在菜单栏下方留 gap；
+    /// 接壤模式：顶部贴屏幕顶端，窗口包含菜单栏高度的黑色"刘海延伸带"
     private func frame(on screen: NSScreen) -> NSRect {
+        let attached = SettingsStore.shared.notchAttached
+        let bandHeight = attached ? PanelMetrics.menuBarHeight(on: screen) : 0
         let width = min(PanelMetrics.width, screen.visibleFrame.width)
-        let height = min(PanelMetrics.height, max(1, topY(on: screen) - screen.visibleFrame.minY))
+        let top = attached ? screen.frame.maxY : topY(on: screen)
+        let height = min(PanelMetrics.height + bandHeight,
+                         max(1, top - screen.visibleFrame.minY))
         return NSRect(x: screen.visibleFrame.midX - width / 2,
-                      y: topY(on: screen) - height, width: width, height: height)
+                      y: top - height, width: width, height: height)
     }
 
     /// 面板顶边：菜单栏下方留 gap，不覆盖刘海/菜单栏

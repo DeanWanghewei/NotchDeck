@@ -20,12 +20,39 @@ struct NotchDeckView: View {
 
 private struct PanelRoot: View {
     @EnvironmentObject private var app: AppModel
+    @ObservedObject private var settings = SettingsStore.shared
 
     var body: some View {
+        Group {
+            if settings.notchAttached {
+                // 接壤模式：黑色延伸带与硬件刘海同色融合，卡片顶部直角、底部大圆角
+                VStack(spacing: 0) {
+                    Color.black
+                        .frame(height: PanelMetrics.menuBarHeight)
+                    card
+                }
+                .clipShape(bottomRoundedRectangle(radius: PanelMetrics.cornerRadius))
+                .overlay(
+                    bottomRoundedRectangle(radius: PanelMetrics.cornerRadius)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                )
+            } else {
+                card
+                    .clipShape(RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                    )
+            }
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.9), value: settings.notchAttached)
+    }
+
+    private var card: some View {
         let pinned = app.pinnedModules
         let tabs = app.tabModules
 
-        VStack(spacing: 14) {
+        return VStack(spacing: 14) {
             ScrollView(.vertical) {
                 VStack(spacing: 14) {
                     // 上层：常驻区（为空则整体不占位）
@@ -63,11 +90,6 @@ private struct PanelRoot: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(VisualEffectBackground())
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.4))
-        .clipShape(RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-        )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: app.activeTabID)
     }
 

@@ -70,6 +70,10 @@ final class SettingsStore: ObservableObject {
     @Published var experimentalNowPlaying: Bool {
         didSet { defaults.set(experimentalNowPlaying, forKey: Keys.experimentalNowPlaying) }
     }
+    /// 面板与刘海接壤（视觉一体）；false = 悬浮于菜单栏下方
+    @Published var notchAttached: Bool {
+        didSet { defaults.set(notchAttached, forKey: Keys.notchAttached) }
+    }
     /// 系统监控：CPU 近 15 分钟热力图
     @Published var showCPUHeatmap: Bool {
         didSet { defaults.set(showCPUHeatmap, forKey: Keys.showCPUHeatmap) }
@@ -117,6 +121,7 @@ final class SettingsStore: ObservableObject {
         static let showSwap = "settings.showSwap"
         static let showBattery = "settings.showBattery"
         static let experimentalNowPlaying = "settings.experimentalNowPlaying"
+        static let notchAttached = "settings.notchAttached"
     }
 
     /// 各模块的默认布局
@@ -154,6 +159,7 @@ final class SettingsStore: ObservableObject {
         showSwap = defaults.object(forKey: Keys.showSwap) as? Bool ?? true
         showBattery = defaults.object(forKey: Keys.showBattery) as? Bool ?? true
         experimentalNowPlaying = defaults.object(forKey: Keys.experimentalNowPlaying) as? Bool ?? false
+        notchAttached = defaults.object(forKey: Keys.notchAttached) as? Bool ?? false
     }
 
     // MARK: - 模块配置
