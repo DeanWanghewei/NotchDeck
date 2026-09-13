@@ -9,7 +9,7 @@
 ### 面板与交互
 - 悬停刘海自动展开（0.2s 延迟，可调 0.1~0.5s）；鼠标离开 1s 自动收起（可调 0.5~2s）
 - 全局快捷键 `⌘⇧I`（可自定义录制）、菜单栏图标兜底（右键菜单含设置/退出）
-- 悬浮岛屿样式：四角大圆角卡片悬浮于菜单栏下方，**不覆盖、不加宽刘海**；高度随内容动态变化
+- 悬浮岛屿样式：四角大圆角卡片悬浮于菜单栏下方，**不覆盖、不加宽刘海**；窗口最大 520 × 580pt，内容统一滚动，底栏保持可见
 - 上下两层布局：常驻区（空则不占位）+ 标签页区（多模块图标切换）
 
 ### 模块（可在设置中开启/关闭、配置常驻或切换）
@@ -27,7 +27,7 @@
 
 ### 权限模型（默认最小权限）
 - 全新安装启动：**不发起任何 AppleScript、不申请任何权限**，面板完整可用（监控/Node/音量/应用/自定义/交互）
-- 媒体模块默认显示"未添加媒体源"引导；用户在设置中开启某个源后，**首次读取才触发该 App 的自动化授权弹窗**，仅此一次，拒绝也只影响该源
+- 媒体模块默认显示"未添加媒体源"引导；用户在设置中开启某个源后，**该 App 运行后首次读取才触发自动化授权弹窗**，由 macOS 管理授权，拒绝也只影响该源
 - 应用快捷控制走 `NSWorkspace` / `NSRunningApplication`，启动/退出用户自己的应用**无需任何权限**
 - 悬停检测仅读取鼠标坐标（`NSEvent.mouseLocation`），无需辅助功能/输入监控权限
 
@@ -41,12 +41,14 @@ protocol NotchModule: ObservableObject {
     var title: String { get }       // 名称
     var systemImage: String { get } // SF Symbol 图标
     var isAvailable: Bool { get }   // 不可用时不出现在面板与设置
+    func start()                   // 启用时开始采集/订阅
+    func stop()                    // 关闭时停止采集并取消任务
     associatedtype Content: View
     func content() -> Content       // 面板内容
 }
 ```
 
-实现协议并 `registry.register(module)` 即可获得：设置中的开关与位置配置（常驻/切换）、布局与动画、面板动态高度等全部能力。内置五个模块全部走这套协议；"自定义子项"模块是用户扩展的第一入口，后续可基于此加载更丰富的外部插件。
+实现协议并 `registry.register(module)` 即可获得：设置中的开关与位置配置（常驻/切换）、布局与动画、滚动容器和生命周期管理。内置六个模块全部走这套协议；"自定义子项"模块是用户扩展的第一入口，后续可基于此加载更丰富的外部插件。
 
 ## 环境要求
 
@@ -82,16 +84,16 @@ NotchDeck/
 ├── Core/
 │   ├── ModuleFramework.swift      # NotchModule 协议 + 注册表（面板框架核心）
 │   ├── AppModel.swift             # 单例聚合根：状态 + 模块 + 布局计算
-│   ├── NotchWindowController.swift# 悬浮岛屿 NSPanel：状态机 + 动态高度
+│   ├── NotchWindowController.swift# 悬浮岛屿 NSPanel：状态机 + 屏幕定位
 │   ├── MouseTracker.swift         # 鼠标轮询（0.1s）悬停/离开检测
 │   ├── HotKeyManager.swift        # Carbon 全局快捷键
 │   ├── SettingsStore.swift        # UserDefaults 封装（含模块配置）
 │   └── Shell.swift                # 外部命令执行（带超时）
 ├── Modules/
-│   ├── Media/                     # 媒体：源注册表 + AppleScript（按需授权）
+│   ├── Media/                     # 媒体：源注册表 + JXA / AppleScript（按需授权）
 │   ├── Apps/                      # 应用快捷控制 + 已安装应用扫描
-│   ├── Volume/                    # 音量：StandardAdditions 脚本
-│   ├── System/                    # 系统监控：host_statistics64 / sysctl / getifaddrs
+│   ├── Volume/                    # 音量：CoreAudio 默认输出设备
+│   ├── System/                    # 系统监控：Mach 统计 / sysctl 64 位网络计数
 │   ├── Node/                      # Node 进程：lsof / ps / kill(SIGTERM)
 │   └── Custom/                    # 自定义命令小部件
 ├── UI/                            # SwiftUI 视图（面板 / 标签栏 / 各模块 / 设置）
@@ -101,8 +103,21 @@ NotchDeck/
 ## 设计要点
 
 - **最小权限**：默认安装零权限申请；媒体源按需添加、按需授权
+- **多显示器**：优先使用带刘海的内置屏；无刘海时使用当前主屏。热区与面板保持在同一屏幕，窗口不超过可见区域
 - **不碰刘海**：面板悬浮于菜单栏下方（留 6pt 间距），完全不覆盖刘海/菜单栏
-- **动画**：展开/收起弹性过渡（缩放+位移动画）、标签页滑动切换、按钮按压缩放反馈；窗口高度随内容动态变化，时长与曲线协调避免"皮筋感"
-- **媒体兼容策略**：MediaRemote 私有框架在 macOS 15.4+ 对第三方静默不应答且符号 ABI 已变化（ForOrigin 变体，错误调用会段错误），故不接入；媒体源走 AppleScript 注册表（`MediaModule.knownSources`），扩展新 App 只需加一行
-- **性能**：鼠标轮询 0.1s / 次，系统监控 1s / 次，Node 扫描 2s / 次（后台队列），空闲开销极低
+- **动画**：展开/收起弹性过渡（缩放+位移动画）、标签页滑动切换、按钮按压缩放反馈；窗口窗口最大 520 × 580pt，内容统一滚动，底栏保持可见，时长与曲线协调避免"皮筋感"
+- **媒体兼容策略**：MediaRemote 私有框架在 macOS 15.4+ 对第三方静默不应答且符号 ABI 已变化（ForOrigin 变体，错误调用会段错误），故不接入；媒体源在 `MediaModule.knownSources` 注册，通过有超时的 osascript 子进程读取；扩展新 App 时需适配其脚本字典、时间单位和封面格式
+- **性能**：鼠标轮询 0.1s / 次，系统监控 1s / 次，Node 扫描 2s / 次（后台队列），采集在后台串行队列执行，关闭模块会停止轮询并取消任务
 - **安全**：不收集任何数据，所有监控仅本地处理
+
+## 回归验证
+
+```bash
+xcodegen generate
+xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
+```
+
+`NotchDeckTests` 是无宿主逻辑测试，不启动 NotchDeck 主程序；设置写入临时 UserDefaults suite，媒体脚本使用模拟应用，不请求播放器授权。覆盖命令硬超时/取消/输出上限、模块生命周期、快捷键持久化、媒体元数据、系统采样与当前用户 TCP 监听扫描。
+
+自定义命令每条最多执行 6 秒，超时或取消时结束本次命令的进程组；标准输出和错误输出各保留最多 256 KiB，并区分成功无输出、非零退出码与超时。模块关闭后不再执行命令，变更配置会取消旧任务并丢弃过期结果。

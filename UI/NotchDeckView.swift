@@ -26,32 +26,36 @@ private struct PanelRoot: View {
         let tabs = app.tabModules
 
         VStack(spacing: 14) {
-            // 上层：常驻区（为空则整体不占位）
-            if !pinned.isEmpty {
+            ScrollView(.vertical) {
                 VStack(spacing: 14) {
-                    ForEach(pinned) { box in
-                        VStack(alignment: .leading, spacing: 8) {
-                            sectionHeader(box)
-                            box.makeContent()
+                    // 上层：常驻区（为空则整体不占位）
+                    if !pinned.isEmpty {
+                        VStack(spacing: 14) {
+                            ForEach(pinned) { box in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    sectionHeader(box)
+                                    box.makeContent()
+                                }
+                            }
                         }
                     }
+
+                    // 下层：标签页区
+                    if tabs.count > 1 {
+                        ModuleTabBar(boxes: tabs, selection: tabSelection)
+                        tabContent(in: tabs)
+                            .id(selectedTabID(in: tabs))
+                    } else if tabs.count == 1 {
+                        tabs[0].makeContent()
+                    }
+
+                    if pinned.isEmpty && tabs.isEmpty {
+                        emptyHint
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .top)
             }
-
-            // 下层：标签页区
-            if tabs.count > 1 {
-                ModuleTabBar(boxes: tabs, selection: tabSelection)
-                tabContent(in: tabs)
-                    .id(selectedTabID(in: tabs))
-            } else if tabs.count == 1 {
-                tabs[0].makeContent()
-            }
-
-            if pinned.isEmpty && tabs.isEmpty {
-                emptyHint
-            }
-
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             PanelFooter()
         }
@@ -81,7 +85,9 @@ private struct PanelRoot: View {
 
     private var tabSelection: Binding<String?> {
         Binding(
-            get: { app.activeTabID ?? app.tabModules.first?.id },
+            get: {
+                app.tabModules.first(where: { $0.id == app.activeTabID })?.id ?? app.tabModules.first?.id
+            },
             set: { app.activeTabID = $0 })
     }
 

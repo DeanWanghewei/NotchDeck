@@ -21,15 +21,18 @@ enum PanelMetrics {
     /// 刘海悬停热区宽度（F1：约 240pt）
     static let hotZoneWidth: CGFloat = 240
 
-    /// 主屏菜单栏高度：刘海屏约 37pt，普通屏约 24pt
-    static var menuBarHeight: CGFloat {
-        guard let screen = NSScreen.screens.first else { return 37 }
-        return max(24, screen.frame.maxY - screen.visibleFrame.maxY)
+    /// 优先选择带刘海的内置屏；没有刘海时使用当前主屏。
+    static var targetScreen: NSScreen? {
+        NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main ?? NSScreen.screens.first
+    }
+
+    static func menuBarHeight(on screen: NSScreen) -> CGFloat {
+        max(24, screen.safeAreaInsets.top, screen.frame.maxY - screen.visibleFrame.maxY)
     }
 }
 
 /// 刘海面板管理：无边框、非激活、statusBar 层级；
-/// 顶部固定在菜单栏下方，高度跟随 SwiftUI 内容动态变化（向下生长）
+/// 顶部固定在菜单栏下方，固定尺寸并限制在当前屏幕可见区域内。
 final class NotchWindowController: NSObject {
     static let shared = NotchWindowController()
 
@@ -41,7 +44,7 @@ final class NotchWindowController: NSObject {
     private var animationGeneration = 0
 
     func configure(with appModel: AppModel) {
-        guard panel == nil, let screen = NSScreen.screens.first else { return }
+        guard panel == nil, let screen = PanelMetrics.targetScreen else { return }
         self.appModel = appModel
 
         let panel = NSPanel(contentRect: frame(on: screen),
@@ -92,7 +95,7 @@ final class NotchWindowController: NSObject {
         let generation = animationGeneration
         state = .expanding
 
-        if let panel, let screen = NSScreen.screens.first {
+        if let panel, let screen = PanelMetrics.targetScreen {
             panel.setFrame(frame(on: screen), display: false)
         }
         panel?.orderFrontRegardless()
@@ -122,20 +125,19 @@ final class NotchWindowController: NSObject {
 
     /// 固定尺寸窗口，顶部固定在菜单栏下方，不覆盖刘海/菜单栏
     private func frame(on screen: NSScreen) -> NSRect {
-        NSRect(x: screen.frame.midX - PanelMetrics.width / 2,
-               y: topY(on: screen) - PanelMetrics.height,
-               width: PanelMetrics.width,
-               height: PanelMetrics.height)
+        let width = min(PanelMetrics.width, screen.visibleFrame.width)
+        let height = min(PanelMetrics.height, max(1, topY(on: screen) - screen.visibleFrame.minY))
+        return NSRect(x: screen.visibleFrame.midX - width / 2,
+                      y: topY(on: screen) - height, width: width, height: height)
     }
 
     /// 面板顶边：菜单栏下方留 gap，不覆盖刘海/菜单栏
     private func topY(on screen: NSScreen) -> CGFloat {
-        screen.frame.maxY - PanelMetrics.menuBarHeight - PanelMetrics.gapBelowMenuBar
+        screen.frame.maxY - PanelMetrics.menuBarHeight(on: screen) - PanelMetrics.gapBelowMenuBar
     }
 
     private func reposition() {
-        guard let panel, let screen = NSScreen.screens.first else { return }
-        panel.setFrameTopLeftPoint(NSPoint(x: screen.frame.midX - PanelMetrics.width / 2,
-                                           y: topY(on: screen)))
+        guard let panel, let screen = PanelMetrics.targetScreen else { return }
+        panel.setFrame(frame(on: screen), display: false)
     }
 }

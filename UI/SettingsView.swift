@@ -41,7 +41,7 @@ struct SettingsView: View {
                             .foregroundStyle(.tertiary)
                     }
                 }
-                Text("默认不申请任何权限。开启某个媒体源后，首次读取会请求该 App 的自动化授权，仅此一次。")
+                Text("默认不申请任何权限。开启媒体源后，该 App 运行时首次读取会请求自动化授权。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -64,7 +64,7 @@ struct SettingsView: View {
                             Spacer()
                             Button {
                                 settings.panelApps.removeAll { $0.id == app.id }
-                            } label: {
+                          } label: {
                                 Image(systemName: "trash")
                                     .font(.system(size: 11))
                             }
@@ -83,7 +83,7 @@ struct SettingsView: View {
                 ForEach(AppModel.shared.registry.boxes) { box in
                     ModuleConfigRow(box: box)
                 }
-                Text("「常驻」固定显示在面板顶部；「切换」显示在下方标签页。关闭后模块不出现在面板。")
+                Text("「常驻」固定显示在面板顶部；「切换」显示在下方标签页。关闭后停止后台采集与命令执行。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -189,7 +189,6 @@ struct SettingsView: View {
                 } else {
                     settings.mediaSources.removeAll { $0 == source.bundleID }
                 }
-                AppModel.shared.media.requestRefresh()
             })
     }
 }
@@ -320,24 +319,34 @@ private struct CustomItemEditView: View {
 private struct HotKeyRecorderView: View {
     @Binding var isRecording: Bool
     @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject private var hotKeys = HotKeyManager.shared
     @State private var eventMonitor: Any?
 
     var body: some View {
-        LabeledContent("全局快捷键") {
-            Button {
-                isRecording ? stopRecording() : startRecording()
-            } label: {
-                Text(isRecording ? "按下新的组合键（Esc 取消）…" : currentDisplay)
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(minWidth: 150)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(isRecording ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.06))
-                    )
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent("全局快捷键") {
+                Button {
+                    isRecording ? stopRecording() : startRecording()
+                } label: {
+                    Text(isRecording ? "按下新的组合键（Esc 取消）…" : currentDisplay)
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(minWidth: 150)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(isRecording ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.06))
+                        )
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
+            if let error = hotKeys.registrationError {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .onDisappear { if isRecording { stopRecording() } }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
+            if isRecording { stopRecording() }
         }
     }
 
@@ -352,7 +361,7 @@ private struct HotKeyRecorderView: View {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
             if event.keyCode == UInt16(kVK_Escape) {
                 DispatchQueue.main.async { self.stopRecording() }
-                return event
+                return nil
             }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             // 至少包含 ⌘/⌥/⌃ 之一，避免注册裸键
@@ -365,10 +374,9 @@ private struct HotKeyRecorderView: View {
             if flags.contains(.control) { carbonModifiers |= UInt32(controlKey) }
             if flags.contains(.shift) { carbonModifiers |= UInt32(shiftKey) }
 
-            settings.hotKeyCode = UInt32(event.keyCode)
-            settings.hotKeyModifiers = carbonModifiers
+            settings.updateHotKey(keyCode: UInt32(event.keyCode), modifiers: carbonModifiers)
             DispatchQueue.main.async { self.stopRecording() }
-            return event
+            return nil
         }
     }
 

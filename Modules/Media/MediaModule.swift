@@ -2,41 +2,33 @@ import AppKit
 import Combine
 import SwiftUI
 
-struct MediaTrack: Equatable {
+struct MediaTrack: Decodable {
     var title = ""
     var artist = ""
     var album = ""
     var isPlaying = false
+    var elapsed: Double = 0
+    var duration: Double = 0
+    var artworkURL = ""
     var appName = ""
     var appBundleID: String?
     var artwork: NSImage?
-    var duration: Double = 0
-    var elapsed: Double = 0
 
-    static func == (lhs: MediaTrack, rhs: MediaTrack) -> Bool {
-        lhs.title == rhs.title && lhs.artist == rhs.artist && lhs.album == rhs.album &&
-            lhs.isPlaying == rhs.isPlaying && lhs.appName == rhs.appName &&
-            lhs.duration == rhs.duration && lhs.elapsed == rhs.elapsed
+    enum CodingKeys: String, CodingKey {
+        case title, artist, album, isPlaying, elapsed, duration, artworkURL
     }
+
+    var artworkKey: String { "\(appBundleID ?? "")|\(title)|\(artist)|\(album)|\(artworkURL)" }
 }
 
-/// 媒体模块（最小权限模型）：
-/// - 默认不查询任何 App、不申请任何权限
-/// - 用户在设置中启用某个媒体源（Music / Spotify / …）后才发起 AppleScript，
-///   授权弹窗在"启用后首次读取"那一刻才出现
-/// - 只对已安装且已启用的 App 发起脚本，绝不触发"定位应用"弹窗
-///
-/// 备注：系统级"正在播放"（MediaRemote 私有框架）在 macOS 15.4+ 对第三方进程
-/// 静默不应答且符号 ABI 已变化（ForOrigin 变体），故不接入；模块框架保留了
-/// 接入更广媒体源的位置（knownSources 注册表）。
+/// 每次只允许一个媒体查询，脚本在有超时的子进程中执行，状态只在主队列更新。
 final class MediaModule: ObservableObject, NotchModule {
     let id = "media"
     let title = "媒体"
     let systemImage = "waveform"
 
-    /// 受支持的媒体源注册表（后续可扩展更多 App）
     struct MediaSource {
-        let name: String          // AppleScript 目标名
+        let name: String
         let bundleID: String
         let displayName: String
         let symbol: String
@@ -47,251 +39,232 @@ final class MediaModule: ObservableObject, NotchModule {
         MediaSource(name: "Spotify", bundleID: "com.spotify.client", displayName: "Spotify", symbol: "dot.radiowaves.left.and.right"),
     ]
 
-    /// 本机已安装、可添加的媒体源（供设置界面展示）
     static var installedSources: [MediaSource] {
-        knownSources.filter {
-            NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil
-        }
+        knownSources.filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil }
     }
 
     @Published private(set) var track: MediaTrack?
-    /// track 最近一次更新的时间（进度条推进用）
     private(set) var trackUpdatedAt = Date()
-
-    private var pollTimer: Timer?
-    private var refreshDebounce: DispatchWorkItem?
-    private let scriptQueue = DispatchQueue(label: "com.notchdeck.media", qos: .utility)
-    private var artworkKey = ""
     private let settings = SettingsStore.shared
+    private let scriptQueue = DispatchQueue(label: "com.notchdeck.media", qos: .utility)
+    private var pollTimer: Timer?
+    private var settingsSubscription: AnyCancellable?
+    private var cancellation: Shell.Cancellation?
+    private var artworkTask: URLSessionDataTask?
+    private var artworkCancellation: Shell.Cancellation?
+    private var artworkKey = ""
+    private var active = false
+    private var refreshing = false
+    private var generation = 0
 
     deinit {
         pollTimer?.invalidate()
+        cancellation?.cancel()
+        artworkCancellation?.cancel()
+        artworkTask?.cancel()
     }
 
     func start() {
+        guard !active else { return }
+        active = true
+        settingsSubscription = settings.$mediaSources.dropFirst().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.requestRefresh() }
         refresh()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.refresh()
         }
     }
 
-    func content() -> some View {
-        MediaView(module: self)
+    func stop() {
+        active = false
+        invalidateRefresh()
+        pollTimer?.invalidate()
+        pollTimer = nil
+        settingsSubscription = nil
+        track = nil
     }
 
-    /// 供设置界面在启用/关闭媒体源后立即刷新（授权弹窗在此时刻触发，语境清晰）
+    func content() -> some View { MediaView(module: self) }
+    var noSourceConfigured: Bool { enabledSources.isEmpty }
+
+    private var enabledSources: [MediaSource] {
+        Self.installedSources.filter { settings.mediaSources.contains($0.bundleID) }
+    }
+
     func requestRefresh() {
-        refreshSoon()
+        invalidateRefresh()
+        track = nil
+        refresh()
     }
 
-    /// 未配置任何媒体源（用于空态引导）
-    var noSourceConfigured: Bool {
-        enabledSources.isEmpty
+    private func invalidateRefresh() {
+        generation += 1
+        cancellation?.cancel()
+        cancellation = nil
+        artworkCancellation?.cancel()
+        artworkCancellation = nil
+        artworkTask?.cancel()
+        artworkTask = nil
+        artworkKey = ""
+        refreshing = false
     }
 
-    /// 已启用且已安装的媒体源
-    private var enabledSources: [(name: String, bundleID: String)] {
-        Self.knownSources.compactMap { source in
-            guard settings.mediaSources.contains(source.bundleID),
-                  NSWorkspace.shared.urlForApplication(withBundleIdentifier: source.bundleID) != nil else {
-                return nil
-            }
-            return (source.name, source.bundleID)
-        }
-    }
+    func togglePlayPause() { send("playpause") }
+    func playNext() { send("nextTrack") }
+    func playPrevious() { send("previousTrack") }
 
-    // MARK: - 控制
-
-    func togglePlayPause() {
-        send("playpause")
-        refreshSoon()
-    }
-
-    func playNext() {
-        send("next track")
-        refreshSoon()
-    }
-
-    func playPrevious() {
-        send("previous track")
-        refreshSoon()
-    }
-
-    /// 跳转到当前播放源对应的 App
     func openApp() {
-        guard let appName = track?.appName, !appName.isEmpty else { return }
-        Scripting.open(appName: appName)
+        guard let bundleID = track?.appBundleID,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 
     private func send(_ command: String) {
-        guard let appName = track?.appName, !appName.isEmpty else { return }
-        scriptQueue.async {
-            Scripting.run("tell application \"\(appName)\" to \(command)")
+        guard active, let bundleID = track?.appBundleID,
+              enabledSources.contains(where: { $0.bundleID == bundleID }) else { return }
+        invalidateRefresh()
+        let version = generation
+        let token = Shell.Cancellation()
+        cancellation = token
+        refreshing = true
+        scriptQueue.async { [weak self] in
+            _ = Shell.execute("/usr/bin/osascript", arguments: ["-l", "JavaScript", "-e",
+                "const app = Application('\(bundleID)'); if (app.running()) app.\(command)();"],
+                cancellation: token)
+            DispatchQueue.main.async {
+                guard let self, self.active, self.generation == version else { return }
+                self.refreshing = false
+                self.refresh()
+            }
         }
-    }
-
-    // MARK: - 状态刷新
-
-    private func refreshSoon() {
-        refreshDebounce?.cancel()
-        let item = DispatchWorkItem { [weak self] in self?.refresh() }
-        refreshDebounce = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: item)
     }
 
     func refresh() {
-        // 最小权限：没有启用的媒体源时不发起任何脚本
-        let candidates = enabledSources
+        guard active, !refreshing else { return }
+        // 不向未运行的应用发送事件，避免后台轮询启动应用或弹出授权。
+        let runningIDs = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        let candidates = enabledSources.filter { runningIDs.contains($0.bundleID) }
         guard !candidates.isEmpty else {
-            if track != nil {
-                track = nil
-                artworkKey = ""
-            }
+            track = nil
+            artworkKey = ""
+            artworkTask?.cancel()
+            artworkCancellation?.cancel()
             return
         }
-
+        refreshing = true
+        let version = generation
+        let token = Shell.Cancellation()
+        cancellation = token
         scriptQueue.async { [weak self] in
-            guard let self else { return }
-
             var chosen: MediaTrack?
-            for (appName, bundleID) in candidates {
-                guard let raw = Scripting.run(Scripting.infoScript(for: appName)),
-                      var parsed = Scripting.parse(raw) else { continue }
-                parsed.appName = appName
-                parsed.appBundleID = bundleID
-                if chosen == nil || parsed.isPlaying {
-                    chosen = parsed
-                }
+            for source in candidates {
+                guard !token.isCancelled else { break }
+                let result = Shell.execute("/usr/bin/osascript", arguments: ["-l", "JavaScript", "-e",
+                    Scripting.infoScript(for: source.bundleID)], cancellation: token)
+                guard result.completion == .exited(0),
+                      var parsed = Scripting.parse(result.output, bundleID: source.bundleID) else { continue }
+                parsed.appName = source.displayName
+                parsed.appBundleID = source.bundleID
+                if chosen == nil || parsed.isPlaying { chosen = parsed }
+                if parsed.isPlaying { break }
             }
-
-            guard var newTrack = chosen else {
-                DispatchQueue.main.async {
+            let sampledAt = Date()
+            DispatchQueue.main.async {
+                guard let self, self.active, self.generation == version else { return }
+                self.refreshing = false
+                self.cancellation = nil
+                if var chosen {
+                    if chosen.artworkKey == self.track?.artworkKey { chosen.artwork = self.track?.artwork }
+                    self.trackUpdatedAt = sampledAt
+                    self.track = chosen
+                    self.loadArtwork(for: chosen)
+                } else {
                     self.track = nil
                     self.artworkKey = ""
+                    self.artworkTask?.cancel()
                 }
-                return
-            }
-
-            let key = "\(newTrack.appName)|\(newTrack.title)|\(newTrack.album)"
-            if key == self.artworkKey {
-                newTrack.artwork = self.track?.artwork
-            } else {
-                self.artworkKey = key
-                if let data = Scripting.runData(Scripting.artworkScript(for: newTrack.appName)),
-                   let image = NSImage(data: data) {
-                    newTrack.artwork = image
-                }
-            }
-
-            DispatchQueue.main.async {
-                self.track = newTrack
-                self.trackUpdatedAt = Date()
             }
         }
+    }
+
+    private func loadArtwork(for track: MediaTrack) {
+        let key = track.artworkKey
+        guard key != artworkKey else { return }
+        artworkKey = key
+        artworkTask?.cancel()
+        artworkCancellation?.cancel()
+        let version = generation
+        if track.appBundleID == "com.spotify.client" {
+            guard let url = URL(string: track.artworkURL), url.scheme == "https" else { return }
+            let request = URLRequest(url: url, timeoutInterval: 6)
+            artworkTask = URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+                let valid = (response as? HTTPURLResponse)?.statusCode == 200
+                DispatchQueue.main.async {
+                    self?.applyArtwork(valid ? data : nil, key: key, version: version)
+                }
+            }
+            artworkTask?.resume()
+        } else {
+            let token = Shell.Cancellation()
+            artworkCancellation = token
+            // Music 的 raw data 经 osascript 输出为 «data XXXX十六进制内容»。
+            scriptQueue.async { [weak self] in
+                let result = Shell.execute("/usr/bin/osascript", arguments: ["-e", """
+                    tell application id "com.apple.Music"
+                        if it is running then
+                            try
+                                return raw data of artwork 1 of current track
+                            end try
+                        end if
+                    end tell
+                    """], outputLimit: 8 * 1024 * 1024, cancellation: token)
+                let data = result.completion == .exited(0) ? Scripting.artworkData(result.output) : nil
+                DispatchQueue.main.async { self?.applyArtwork(data, key: key, version: version) }
+            }
+        }
+    }
+
+    private func applyArtwork(_ data: Data?, key: String, version: Int) {
+        guard active, generation == version, track?.artworkKey == key,
+              let data, data.count <= 4 * 1024 * 1024, let image = NSImage(data: data) else { return }
+        track?.artwork = image
     }
 }
 
-// MARK: - AppleScript 执行（仅针对已安装且已启用的 App）
-
+/// JSON 保留标题中的分隔符、引号和换行；Spotify 的 duration 单位为毫秒。
 enum Scripting {
-    @discardableResult
-    static func run(_ source: String) -> String? {
-        guard let script = NSAppleScript(source: source) else { return nil }
-        var error: NSDictionary?
-        let output = script.executeAndReturnError(&error)
-        if let error {
-            NSLog("NotchDeck AppleScript error: \(error)")
-            return nil
-        }
-        return output.stringValue
-    }
-
-    static func runData(_ source: String) -> Data? {
-        guard let script = NSAppleScript(source: source) else { return nil }
-        var error: NSDictionary?
-        let output = script.executeAndReturnError(&error)
-        if let error {
-            NSLog("NotchDeck AppleScript error: \(error)")
-            return nil
-        }
-        let data = output.data
-        return data.isEmpty ? nil : data
-    }
-
-    /// "title|artist|album|state|elapsed|duration"
-    static func infoScript(for app: String) -> String {
+    static func infoScript(for bundleID: String) -> String {
         """
-        tell application "\(app)"
-            if it is running then
-                try
-                    set theName to name of current track
-                    set theArtist to artist of current track
-                    set theAlbum to album of current track
-                    set st to "stopped"
-                    if player state is playing then set st to "playing"
-                    if player state is paused then set st to "paused"
-                    set theElapsed to player position
-                    set theDuration to duration of current track
-                    return theName & "|" & theArtist & "|" & theAlbum & "|" & st & "|" & (theElapsed as text) & "|" & (theDuration as text)
-                on error
-                    return ""
-                end try
-            end if
-            return ""
-        end tell
+        const app = Application('\(bundleID)');
+        if (app.running()) {
+            const track = app.currentTrack();
+            JSON.stringify({title: track.name(), artist: track.artist(), album: track.album(),
+                isPlaying: app.playerState() === 'playing', elapsed: app.playerPosition(),
+                duration: track.duration(),
+                artworkURL: '\(bundleID)' === 'com.spotify.client' ? track.artworkUrl() : ''});
+        } else { ''; }
         """
     }
 
-    static func artworkScript(for app: String) -> String {
-        switch app {
-        case "Spotify":
-            return """
-            tell application "Spotify"
-                if it is running then
-                    try
-                        return artwork of current track
-                    on error
-                        return ""
-                    end try
-                end if
-                return ""
-            end tell
-            """
-        default:
-            return """
-            tell application "\(app)"
-                if it is running then
-                    try
-                        return data of artwork 1 of current track
-                    on error
-                        return ""
-                    end try
-                end if
-                return ""
-            end tell
-            """
-        }
-    }
-
-    static func parse(_ raw: String?) -> MediaTrack? {
-        guard let raw, !raw.isEmpty else { return nil }
-        let parts = raw.components(separatedBy: "|")
-        guard parts.count == 6, !parts[0].isEmpty else { return nil }
-        var track = MediaTrack()
-        track.title = parts[0]
-        track.artist = parts[1]
-        track.album = parts[2]
-        track.isPlaying = parts[3] == "playing"
-        track.elapsed = Double(parts[4]) ?? 0
-        track.duration = Double(parts[5]) ?? 0
+    static func parse(_ raw: String, bundleID: String) -> MediaTrack? {
+        guard var track = try? JSONDecoder().decode(MediaTrack.self, from: Data(raw.utf8)),
+              !track.title.isEmpty, track.duration.isFinite, track.elapsed.isFinite else { return nil }
+        if bundleID == "com.spotify.client" { track.duration /= 1000 }
+        track.duration = max(0, track.duration)
+        track.elapsed = min(max(0, track.elapsed), track.duration)
         return track
     }
 
-    static func open(appName: String) {
-        let bundleIDs = ["Music": "com.apple.Music", "Spotify": "com.spotify.client"]
-        if let bundleID = bundleIDs[appName],
-           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+    static func artworkData(_ raw: String) -> Data? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.hasPrefix("«data "), value.hasSuffix("»"), value.count >= 12 else { return nil }
+        let hex = Array(value.dropFirst(10).dropLast().utf8)
+        guard hex.count.isMultiple(of: 2) else { return nil }
+        var data = Data(capacity: hex.count / 2)
+        for index in stride(from: 0, to: hex.count, by: 2) {
+            guard let byte = UInt8(String(decoding: hex[index...index + 1], as: UTF8.self), radix: 16) else { return nil }
+            data.append(byte)
         }
+        return data.isEmpty ? nil : data
     }
 }

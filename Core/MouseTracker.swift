@@ -2,7 +2,7 @@ import AppKit
 
 /// 零权限鼠标悬停检测：NSEvent.mouseLocation + Timer 轮询（0.1s/次）
 ///
-/// - 悬停主屏刘海区域（240pt 宽、5pt 高）超过 hoverDelay 后回调展开
+/// - 悬停内置屏刘海区域（240pt 宽、5pt 高）超过 hoverDelay 后回调展开
 /// - 鼠标离开面板超过 collapseDelay 后回调收起（仅当鼠标曾进入过面板，
 ///   避免快捷键呼出时鼠标不在面板内被立即收起）
 final class MouseTracker {
@@ -41,6 +41,8 @@ final class MouseTracker {
                     hoverDeadline = Date().addingTimeInterval(settings.hoverDelay)
                 } else if Date() >= hoverDeadline! {
                     hoverDeadline = nil
+                    // 悬停呼出的面板即使未进入内容区，也应在离开后收起。
+                    hasEnteredPanel = true
                     onShouldExpand?()
                 }
             } else {
@@ -68,10 +70,10 @@ final class MouseTracker {
         }
     }
 
-    /// 仅主显示器（screens[0]）且带刘海（safeAreaInsets.top > 0）时启用热区
+    /// 热区与面板使用同一块刘海屏，且不延伸到其上方的其他显示器。
     private static func isMouseInNotchArea(_ point: NSPoint) -> Bool {
-        guard let screen = NSScreen.screens.first, screen.safeAreaInsets.top > 0 else { return false }
-        return point.y > screen.frame.maxY - 5 &&
+        guard let screen = PanelMetrics.targetScreen, screen.safeAreaInsets.top > 0 else { return false }
+        return point.y <= screen.frame.maxY && point.y > screen.frame.maxY - 5 &&
             abs(point.x - screen.frame.midX) < PanelMetrics.hotZoneWidth / 2
     }
 }

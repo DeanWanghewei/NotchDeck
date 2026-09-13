@@ -30,3 +30,24 @@ targets:
         INFOPLIST_KEY_NSAppleEventsUsageDescription: "NotchDeck 通过自动化读取并控制音乐播放（Music / Spotify）。"
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
+  NotchDeckTests:
+    type: bundle.unit-test
+    platform: macOS
+    # 无宿主逻辑测试：复用产品源码，不启动菜单栏 App 或读取用户的媒体源。
+    sources:
+      - path: Core
+      - path: Modules
+      - path: UI
+      - path: Tests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+        CODE_SIGN_IDENTITY: "-"
+schemes:
+  NotchDeck:
+    build:
+      targets:
+        NotchDeck: all
+    test:
+      targets:
+        - NotchDeckTests

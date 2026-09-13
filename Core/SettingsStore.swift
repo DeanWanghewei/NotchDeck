@@ -29,13 +29,13 @@ final class SettingsStore: ObservableObject {
     @Published var hotKeyCode: UInt32 {
         didSet {
             defaults.set(Int(hotKeyCode), forKey: Keys.hotKeyCode)
-            NotificationCenter.default.post(name: Self.hotKeyDidChange, object: nil)
+            notifyHotKeyChange()
         }
     }
     @Published var hotKeyModifiers: UInt32 {
         didSet {
             defaults.set(Int(hotKeyModifiers), forKey: Keys.hotKeyModifiers)
-            NotificationCenter.default.post(name: Self.hotKeyDidChange, object: nil)
+            notifyHotKeyChange()
         }
     }
     /// 模块布局配置：moduleId → 配置；未记录的模块使用默认值
@@ -68,6 +68,20 @@ final class SettingsStore: ObservableObject {
     }
 
     private let defaults: UserDefaults
+    private var updatingHotKey = false
+
+    func updateHotKey(keyCode: UInt32, modifiers: UInt32) {
+        updatingHotKey = true
+        hotKeyCode = keyCode
+        hotKeyModifiers = modifiers
+        updatingHotKey = false
+        notifyHotKeyChange()
+    }
+
+    private func notifyHotKeyChange() {
+        guard !updatingHotKey else { return }
+        NotificationCenter.default.post(name: Self.hotKeyDidChange, object: nil)
+    }
 
     private enum Keys {
         static let hoverEnabled = "settings.hoverEnabled"
@@ -102,10 +116,12 @@ final class SettingsStore: ObservableObject {
         collapseEnabled = defaults.object(forKey: Keys.collapseEnabled) as? Bool ?? true
         collapseDelay = defaults.object(forKey: Keys.collapseDelay) as? Double ?? 1.0
 
-        let storedKeyCode = defaults.integer(forKey: Keys.hotKeyCode)
-        hotKeyCode = storedKeyCode == 0 ? UInt32(kVK_ANSI_I) : UInt32(storedKeyCode)
+        let storedKeyCode = defaults.object(forKey: Keys.hotKeyCode) as? Int
+        hotKeyCode = storedKeyCode.flatMap { (0...127).contains($0) ? UInt32($0) : nil }
+            ?? UInt32(kVK_ANSI_I)
         let storedModifiers = defaults.integer(forKey: Keys.hotKeyModifiers)
-        hotKeyModifiers = storedModifiers == 0 ? UInt32(cmdKey | shiftKey) : UInt32(storedModifiers)
+        hotKeyModifiers = UInt32(exactly: storedModifiers).flatMap { $0 == 0 ? nil : $0 }
+            ?? UInt32(cmdKey | shiftKey)
 
         moduleConfigs = Self.decode([String: ModuleConfig].self, forKey: Keys.moduleConfigs, defaults: defaults) ?? [:]
         customItems = Self.decode([CustomItem].self, forKey: Keys.customItems, defaults: defaults) ?? []

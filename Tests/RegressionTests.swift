@@ -1,0 +1,318 @@
+import Carbon.HIToolbox
+import Combine
+import Darwin
+import SwiftUI
+import XCTest
+
+final class ShellTests: XCTestCase {
+    func testExitStatusStderrAndEmptySuccess() {
+        let result = Shell.execute("/bin/sh", arguments: ["-c", "printf out; printf problem >&2; exit 7"])
+        XCTAssertEqual(result.completion, .exited(7))
+        XCTAssertEqual(result.output, "out")
+        XCTAssertEqual(result.errorOutput, "problem")
+        XCTAssertEqual(Shell.run("/usr/bin/true", arguments: []), "")
+        XCTAssertNil(Shell.run("/usr/bin/false", arguments: []))
+    }
+
+    func testHardTimeoutKillsUncooperativeProcessGroup() throws {
+        let start = ProcessInfo.processInfo.systemUptime
+        let result = Shell.execute("/bin/sh", arguments: ["-c",
+            "trap '' TERM; /bin/sleep 20 & child=$!; printf '%s' \"$child\"; wait"], timeout: 0.25)
+        XCTAssertEqual(result.completion, .timedOut)
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 2)
+        let child = try XCTUnwrap(pid_t(result.output))
+        let state = Shell.run("/bin/ps", arguments: ["-p", String(child), "-o", "stat="])
+        // 已退出或等待 init 回收的僵尸均不再执行用户命令。
+        XCTAssertTrue(state == nil || state?.contains("Z") == true)
+    }
+
+    func testExitedParentCannotLeavePipeReaderBlocked() {
+        let start = ProcessInfo.processInfo.systemUptime
+        let result = Shell.execute("/bin/sh", arguments: ["-c", "/bin/sleep 20 & exit 0"], timeout: 0.2)
+        XCTAssertEqual(result.completion, .timedOut)
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 2)
+    }
+
+    func testLargeOutputIsBoundedAndStillDrained() {
+        let result = Shell.execute("/bin/sh", arguments: ["-c",
+            "/usr/bin/yes x | /usr/bin/head -c 1048576; /usr/bin/yes y | /usr/bin/head -c 1048576 >&2"],
+            outputLimit: 1024)
+        XCTAssertEqual(result.completion, .exited(0))
+        XCTAssertEqual(result.output.utf8.count, 1024)
+        XCTAssertEqual(result.errorOutput.utf8.count, 1024)
+        XCTAssertTrue(result.outputTruncated)
+    }
+
+    func testContinuousOutputStillTimesOut() {
+        let result = Shell.execute("/usr/bin/yes", arguments: ["x"], timeout: 0.2, outputLimit: 512)
+        XCTAssertEqual(result.completion, .timedOut)
+        XCTAssertTrue(result.outputTruncated)
+    }
+
+    func testCancellationInterruptsRunningCommand() {
+        let cancellation = Shell.Cancellation()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { cancellation.cancel() }
+        let result = Shell.execute("/bin/sleep", arguments: ["20"], cancellation: cancellation)
+        XCTAssertEqual(result.completion, .cancelled)
+    }
+
+    func testLaunchFailureAndLossyUTF8() {
+        let missing = Shell.execute("/notchdeck-nonexistent-executable", arguments: [])
+        XCTAssertEqual(missing.completion, .launchFailed(ENOENT))
+        let result = Shell.execute("/bin/sh", arguments: ["-c", "printf '\\377ok'"])
+        XCTAssertEqual(result.completion, .exited(0))
+        XCTAssertTrue(result.output.hasSuffix("ok"))
+    }
+}
+
+final class SettingsAndLifecycleTests: XCTestCase {
+    private var defaults: UserDefaults!
+    private var suite: String!
+
+    override func setUp() {
+        suite = "com.notchdeck.tests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suite)!
+    }
+
+    override func tearDown() { defaults.removePersistentDomain(forName: suite) }
+
+    func testAKeySurvivesRestartAndInvalidStoredValuesDoNotCrash() {
+        let settings = SettingsStore(defaults: defaults)
+        settings.hotKeyCode = UInt32(kVK_ANSI_A)
+        XCTAssertEqual(SettingsStore(defaults: defaults).hotKeyCode, UInt32(kVK_ANSI_A))
+        defaults.set(-1, forKey: "settings.hotKeyCode")
+        defaults.set(-1, forKey: "settings.hotKeyModifiers")
+        let restored = SettingsStore(defaults: defaults)
+        XCTAssertEqual(restored.hotKeyCode, UInt32(kVK_ANSI_I))
+        XCTAssertEqual(restored.hotKeyModifiers, UInt32(cmdKey | shiftKey))
+    }
+
+    func testRegistryStartsOnceAndStopsDisabledOrUnavailableModules() {
+        let settings = SettingsStore(defaults: defaults)
+        let registry = ModuleRegistry()
+        let module = LifecycleModule()
+        registry.register(module)
+        registry.register(module)
+        registry.updateActivity(settings: settings)
+        registry.updateActivity(settings: settings)
+        XCTAssertEqual(registry.boxes.count, 1)
+        XCTAssertEqual(module.starts, 1)
+        settings.updateConfig(for: module.id) { $0.enabled = false }
+        registry.updateActivity(settings: settings)
+        XCTAssertEqual(module.stops, 1)
+        settings.updateConfig(for: module.id) { $0.enabled = true }
+        registry.updateActivity(settings: settings)
+        module.isAvailable = false
+        registry.updateActivity(settings: settings)
+        XCTAssertEqual(module.starts, 2)
+        XCTAssertEqual(module.stops, 2)
+    }
+
+    @MainActor
+    func testChangedCustomCommandDiscardsOldResultsAndRunsNewCommand() {
+        let settings = SettingsStore(defaults: defaults)
+        let old = CustomItem(name: "test", command: "/bin/sleep 2; printf stale")
+        settings.customItems = [old]
+        let module = CustomItemsModule(settings: settings)
+        module.start()
+        defer { module.stop() }
+        let updated = expectation(description: "New configuration finishes")
+        var observed: [String] = []
+        let subscription = module.$outputs.sink { output in
+            if let value = output[old.id] {
+                observed.append(value)
+                if value == "fresh" { updated.fulfill() }
+            }
+        }
+        module.refresh()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            var replacement = old
+            replacement.command = "printf fresh"
+            settings.customItems = [replacement]
+        }
+        wait(for: [updated], timeout: 3)
+        XCTAssertFalse(observed.contains("stale"))
+        withExtendedLifetime(subscription) {}
+    }
+
+    @MainActor
+    func testDisabledCustomModuleDoesNotExecuteAndStopDiscardsResults() {
+        let settings = SettingsStore(defaults: defaults)
+        settings.customItems = [CustomItem(name: "test", command: "/bin/sleep 1; printf stale")]
+        settings.updateConfig(for: "custom") { $0.enabled = false }
+        let module = CustomItemsModule(settings: settings)
+        module.start()
+        module.refresh()
+        XCTAssertFalse(module.isRunning)
+        settings.updateConfig(for: "custom") { $0.enabled = true }
+        module.refresh()
+        XCTAssertTrue(module.isRunning)
+        module.stop()
+        let settled = expectation(description: "Cancelled completion delivered")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { settled.fulfill() }
+        wait(for: [settled], timeout: 2)
+        XCTAssertFalse(module.isRunning)
+        XCTAssertTrue(module.outputs.isEmpty)
+    }
+}
+
+private final class LifecycleModule: ObservableObject, NotchModule {
+    let id = "fixture"
+    let title = "fixture"
+    let systemImage = "circle"
+    var isAvailable = true
+    var starts = 0
+    var stops = 0
+    func start() { starts += 1 }
+    func stop() { stops += 1 }
+    func content() -> some View { EmptyView() }
+}
+
+final class MediaAndMonitoringTests: XCTestCase {
+    func testGeneratedMediaScriptWithFixtureApplication() throws {
+        // 执行实际 JXA 脚本，但用普通 JS 对象替代应用，避免自动化授权与播放器副作用。
+        let fixture = """
+        const fixtureApplication = function() { return {
+            running: function() { return true; },
+            playerState: function() { return 'playing'; },
+            playerPosition: function() { return 12.5; },
+            currentTrack: function() { return {
+                name: function() { return 'Song | live'; }, artist: function() { return 'Artist'; },
+                album: function() { return 'Album'; }, duration: function() { return 120000; },
+                artworkUrl: function() { return 'https://example.com/art.jpg'; }
+            }; }
+        }; };
+        """
+        let result = Shell.execute("/usr/bin/osascript", arguments: ["-l", "JavaScript", "-e",
+            fixture + "\n" + Scripting.infoScript(for: "com.spotify.client")
+                .replacingOccurrences(of: "Application(", with: "fixtureApplication(")])
+        XCTAssertEqual(result.completion, .exited(0), result.errorOutput)
+        let track = try XCTUnwrap(Scripting.parse(result.output, bundleID: "com.spotify.client"))
+        XCTAssertEqual(track.title, "Song | live")
+        XCTAssertEqual(track.duration, 120)
+        XCTAssertTrue(track.isPlaying)
+    }
+
+    @MainActor
+    func testNativeSystemSamplingPublishesUsableData() {
+        let monitor = SystemMonitor()
+        let sampled = expectation(description: "Native sample")
+        let subscription = monitor.$stats.dropFirst().first().sink { stats in
+            XCTAssertGreaterThan(stats.memoryTotal, 0)
+            XCTAssertGreaterThan(stats.memoryUsed, 0)
+            XCTAssertGreaterThan(stats.diskTotal, 0)
+            XCTAssertTrue((0...1).contains(stats.cpuUsage))
+            sampled.fulfill()
+        }
+        monitor.start()
+        defer { monitor.stop() }
+        wait(for: [sampled], timeout: 3)
+        withExtendedLifetime(subscription) {}
+    }
+
+    @MainActor
+    func testScannerFindsOwnedListeningSocket() throws {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        defer { close(descriptor) }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        XCTAssertEqual(bound, 0)
+        XCTAssertEqual(listen(descriptor, 1), 0)
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(descriptor, $0, &length) }
+        }
+        XCTAssertEqual(named, 0)
+        let port = Int(UInt16(bigEndian: address.sin_port))
+        let scanner = NodeProcessScanner()
+        let found = expectation(description: "Owned TCP listener found")
+        let subscription = scanner.$processes.dropFirst().first().sink { processes in
+            XCTAssertTrue(processes.contains { $0.pid == getpid() && $0.port == port })
+            XCTAssertTrue(processes.allSatisfy { $0.identity.uid == getuid() })
+            found.fulfill()
+        }
+        scanner.start()
+        defer { scanner.stop() }
+        wait(for: [found], timeout: 10)
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testMediaMetadataPreservesSeparatorsAndSpotifyDurationUsesSeconds() throws {
+        let title = "Song | Part \"2\"\n现场"
+        let raw = try JSONSerialization.data(withJSONObject: [
+            "title": title, "artist": "A|B", "album": "Live", "isPlaying": true,
+            "elapsed": 75.5, "duration": 180000, "artworkURL": "https://example.com/cover.jpg"
+        ])
+        let spotify = try XCTUnwrap(Scripting.parse(String(decoding: raw, as: UTF8.self), bundleID: "com.spotify.client"))
+        XCTAssertEqual(spotify.title, title)
+        XCTAssertEqual(spotify.artist, "A|B")
+        XCTAssertEqual(spotify.duration, 180)
+        XCTAssertEqual(spotify.elapsed, 75.5)
+        let music = try XCTUnwrap(Scripting.parse(String(decoding: raw, as: UTF8.self), bundleID: "com.apple.Music"))
+        XCTAssertEqual(music.duration, 180000)
+    }
+
+    func testMalformedMediaAndRawArtwork() {
+        XCTAssertNil(Scripting.parse("not JSON", bundleID: "com.apple.Music"))
+        XCTAssertEqual(Scripting.artworkData("«data JPEGFFD8FF»\n"), Data([0xff, 0xd8, 0xff]))
+        XCTAssertNil(Scripting.artworkData("«data JPEGXYZ»"))
+        XCTAssertNil(Scripting.artworkData(""))
+    }
+
+    func testRatesUseElapsedTimeAnd64BitCounters() {
+        var sample = NetworkRateSample()
+        let initial: UInt64 = 9_000_000_000
+        XCTAssertEqual(sample.update([1: NetworkCounter(inBytes: initial, outBytes: initial)], at: 10).down, 0)
+        let rate = sample.update([1: NetworkCounter(inBytes: initial + 2000, outBytes: initial + 1000)], at: 12)
+        XCTAssertEqual(rate.down, 1000)
+        XCTAssertEqual(rate.up, 500)
+    }
+
+    func testCounterResetNewInterfaceAndWakeDoNotSpike() {
+        var sample = NetworkRateSample()
+        _ = sample.update([1: NetworkCounter(inBytes: 1000, outBytes: 1000)], at: 1)
+        let reset = sample.update([1: NetworkCounter(inBytes: 0, outBytes: 0),
+                                   2: NetworkCounter(inBytes: 99999, outBytes: 99999)], at: 2)
+        XCTAssertEqual(reset.down, 0)
+        XCTAssertEqual(reset.up, 0)
+        XCTAssertEqual(sample.update([1: NetworkCounter(inBytes: 9000, outBytes: 9000)], at: 100).down, 0)
+    }
+
+    func testCPUTickWrapDoesNotUnderflow() {
+        XCTAssertEqual(CPUSample.usage(previous: [UInt32.max - 4, 0, 20, 0], current: [5, 0, 30, 0]), 0.5)
+        XCTAssertEqual(CPUSample.usage(previous: [1, 2, 3, 4], current: [1, 2, 3, 4]), 0)
+    }
+
+    func testListenerFieldParserSupportsIPv6AndDeduplicatesSockets() {
+        let result = NodeProcessScanner.parseListeners("p42\nn*:3000\nn[::1]:3000\nn127.0.0.1:8080\np43\nn*:3000\npbad\nn*:9000\np44\nn*:65536\n")
+        XCTAssertEqual(result[42], [3000, 8080])
+        XCTAssertEqual(result[43], [3000])
+        XCTAssertNil(result[44])
+        XCTAssertEqual(result.count, 2)
+    }
+
+    func testKillerRejectsProcessGroupsSelfAndStaleIdentity() throws {
+        let current = try XCTUnwrap(ProcessIdentity.read(getpid()))
+        XCTAssertNotNil(NodeProcessKiller.terminate(current))
+        XCTAssertNotNil(NodeProcessKiller.terminate(ProcessIdentity(pid: 0, uid: getuid(), startSeconds: 0, startMicroseconds: 0)))
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        child.arguments = ["10"]
+        try child.run()
+        defer { if child.isRunning { child.terminate() }; child.waitUntilExit() }
+        let identity = try XCTUnwrap(ProcessIdentity.read(child.processIdentifier))
+        let stale = ProcessIdentity(pid: identity.pid, uid: identity.uid,
+                                    startSeconds: identity.startSeconds + 1, startMicroseconds: identity.startMicroseconds)
+        XCTAssertNotNil(NodeProcessKiller.terminate(stale))
+        XCTAssertTrue(child.isRunning)
+        XCTAssertNil(NodeProcessKiller.terminate(identity))
+    }
+}

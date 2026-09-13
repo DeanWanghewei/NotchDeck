@@ -16,6 +16,7 @@ struct VolumeView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(ScalingButtonStyle())
+            .disabled(!module.canMute)
             .help(module.muted ? "取消静音" : "静音")
 
             Slider(value: Binding(
@@ -23,13 +24,13 @@ struct VolumeView: View {
                 set: { module.setVolume($0, immediate: false) }),
                    in: 0...100,
                    onEditingChanged: { editing in
-                       if !editing {
-                           module.setVolume(module.volume, immediate: true)
-                       }
+                       module.setEditing(editing)
                    })
                 .tint(.accentColor)
+                .disabled(!module.canSetVolume)
+                .help(module.canSetVolume ? "输出音量" : "当前输出设备不支持系统音量调节")
 
-            Text("\(Int(module.volume.rounded()))")
+            Text(module.canSetVolume ? "\(Int(module.volume.rounded()))" : "—")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 30, alignment: .trailing)

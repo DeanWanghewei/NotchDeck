@@ -1,11 +1,13 @@
 import Carbon.HIToolbox
+import Combine
 import Foundation
 
 /// Carbon RegisterEventHotKey 全局快捷键（无需辅助功能/输入监控权限）
-final class HotKeyManager {
+final class HotKeyManager: ObservableObject {
     static let shared = HotKeyManager()
 
     var onTrigger: (() -> Void)?
+    @Published private(set) var registrationError: String?
 
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
@@ -31,6 +33,9 @@ final class HotKeyManager {
                                           GetApplicationEventTarget(), 0, &ref)
         if status == noErr {
             hotKeyRef = ref
+            registrationError = nil
+        } else {
+            registrationError = "快捷键注册失败（\(status)），可能已被其他应用占用，请重新录制。"
         }
     }
 

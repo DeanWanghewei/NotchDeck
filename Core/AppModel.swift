@@ -12,7 +12,7 @@ final class AppModel: ObservableObject {
 
     @Published var isExpanded = false {
         didSet {
-            if isExpanded {
+            if isExpanded && !oldValue {
                 NotificationCenter.default.post(name: Self.panelDidExpand, object: nil)
             }
         }
@@ -34,13 +34,6 @@ final class AppModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
 
     private init() {
-        media.start()
-        system.start()
-        node.start()
-        volume.start()
-        custom.start()
-        apps.start()
-
         registry.register(media)
         registry.register(volume)
         registry.register(apps)
@@ -54,6 +47,24 @@ final class AppModel: ObservableObject {
         settings.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
+        // @Published 在赋值前发出事件，切到下一次主队列读取完整的新配置。
+        settings.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateModules() }
+            .store(in: &cancellables)
+        updateModules()
+    }
+
+    private func updateModules() {
+        let customWasActive = registry.boxes.first(where: { $0.id == custom.id })?.isActive == true
+        registry.updateActivity(settings: settings)
+        if isExpanded, !customWasActive,
+           registry.boxes.first(where: { $0.id == custom.id })?.isActive == true {
+            custom.refresh()
+        }
+        if !tabModules.contains(where: { $0.id == activeTabID }) {
+            activeTabID = tabModules.first?.id
+        }
     }
 
     // MARK: - 布局计算

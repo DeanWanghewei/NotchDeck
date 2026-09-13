@@ -4,8 +4,9 @@ import Foundation
 import SwiftUI
 
 struct NodeProcessInfo: Identifiable, Equatable {
-    var id: String { "\(pid)-\(port)" }
-    let pid: pid_t
+    var id: String { "\(pid)-\(identity.startSeconds)-\(identity.startMicroseconds)-\(port)" }
+    let identity: ProcessIdentity
+    var pid: pid_t { identity.pid }
     let port: Int
     let displayName: String
     let executableName: String
@@ -23,59 +24,62 @@ final class NodeProcessScanner: ObservableObject {
 
     private var timer: Timer?
     private var isScanning = false
+    private var generation = 0
+    private var cancellation: Shell.Cancellation?
     private let scanQueue = DispatchQueue(label: "com.notchdeck.nodescanner", qos: .utility)
 
     func start() {
         guard timer == nil else { return }
-        scan()
+        generation += 1
         timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.scan()
         }
+        scan()
     }
 
     func stop() {
+        generation += 1
+        cancellation?.cancel()
         timer?.invalidate()
         timer = nil
     }
 
     func scan() {
-        guard !isScanning else { return }
+        guard timer != nil, !isScanning else { return }
         isScanning = true
+        let version = generation
+        let token = Shell.Cancellation()
+        cancellation = token
         scanQueue.async { [weak self] in
-            let result = Self.performScan()
+            let result = Self.performScan(cancellation: token)
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.processes = result
                 self.isScanning = false
+                guard self.timer != nil, self.generation == version else { return }
+                self.processes = result
             }
         }
     }
 
     // MARK: - 扫描实现
 
-    private static func performScan() -> [NodeProcessInfo] {
-        guard let lsofOutput = Shell.run("/usr/sbin/lsof", arguments: ["-i", "-P", "-n", "-w"]) else {
-            return []
+    private static func performScan(cancellation: Shell.Cancellation) -> [NodeProcessInfo] {
+        func run(_ path: String, _ arguments: [String]) -> String? {
+            let result = Shell.execute(path, arguments: arguments, cancellation: cancellation)
+            return result.completion == .exited(0) ? result.output : nil
         }
-
-        // 1. 收集所有 LISTEN 的 pid + 端口
-        var pidPorts: [pid_t: Set<Int>] = [:]
-        for line in lsofOutput.split(separator: "\n").dropFirst() {
-            guard line.contains("(LISTEN)") else { continue }
-            let fields = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-            // COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME (LISTEN)
-            guard fields.count >= 9,
-                  let pid = pid_t(fields[1]),
-                  let port = Int(fields[8].split(separator: ":").last ?? ""),
-                  port > 0, port < 65536 else { continue }
-            pidPorts[pid, default: []].insert(port)
-        }
+        guard let lsofOutput = run("/usr/sbin/lsof", ["-a", "-u", String(getuid()),
+            "-iTCP", "-sTCP:LISTEN", "-nP", "-Fpn"]) else { return [] }
+        let pidPorts = parseListeners(lsofOutput)
         guard !pidPorts.isEmpty else { return [] }
-
-        let pidList = pidPorts.keys.map(String.init).joined(separator: ",")
+        let identities = pidPorts.keys.reduce(into: [pid_t: ProcessIdentity]()) { result, pid in
+            if let identity = ProcessIdentity.read(pid), identity.uid == getuid() { result[pid] = identity }
+        }
+        guard !identities.isEmpty else { return [] }
+        let pidList = identities.keys.sorted().map(String.init).joined(separator: ",")
 
         // 2. ps 获取 CPU/内存/完整命令行；comm 为真实可执行文件（不受 process.title 改名影响）
-        guard let metricsOutput = Shell.run("/bin/ps", arguments: ["-o", "pid=,%cpu=,rss=,command=", "-p", pidList]) else {
+        guard let metricsOutput = run("/bin/ps", ["-ww", "-o", "pid=,%cpu=,rss=,command=", "-p", pidList]) else {
             return []
         }
         var pidMetrics: [pid_t: (cpu: Double, memoryMB: Double, command: String)] = [:]
@@ -90,7 +94,7 @@ final class NodeProcessScanner: ObservableObject {
 
         // comm 单独一列（路径可能含空格，pid 之后的整体即 comm）
         var pidComm: [pid_t: String] = [:]
-        if let commOutput = Shell.run("/bin/ps", arguments: ["-o", "pid=,comm=", "-p", pidList]) {
+        if let commOutput = run("/bin/ps", ["-ww", "-o", "pid=,comm=", "-p", pidList]) {
             for line in commOutput.split(separator: "\n") {
                 let fields = line.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).map(String.init)
                 if fields.count == 2, let pid = pid_t(fields[0]) {
@@ -102,7 +106,8 @@ final class NodeProcessScanner: ObservableObject {
         // 3. 组装：排除系统目录下的守护进程（ControlCenter、rapportd 等），其余全部展示
         var result: [NodeProcessInfo] = []
         for (pid, ports) in pidPorts {
-            guard let metrics = pidMetrics[pid] else { continue }
+            guard let metrics = pidMetrics[pid], let identity = identities[pid],
+                  ProcessIdentity.read(pid) == identity else { continue }
             let comm = pidComm[pid] ?? ""
             guard !isSystemDaemon(comm) else { continue }
 
@@ -110,7 +115,7 @@ final class NodeProcessScanner: ObservableObject {
             let executableName = (comm as NSString).lastPathComponent
             let isAppProcess = comm.contains(".app/")
             for port in ports {
-                result.append(NodeProcessInfo(pid: pid,
+                result.append(NodeProcessInfo(identity: identity,
                                               port: port,
                                               displayName: displayName,
                                               executableName: executableName.isEmpty ? "进程" : executableName,
@@ -120,7 +125,24 @@ final class NodeProcessScanner: ObservableObject {
                                               commandLine: metrics.command))
             }
         }
-        return result.sorted { $0.port < $1.port }
+        return result.sorted { ($0.port, $0.pid) < ($1.port, $1.pid) }
+    }
+
+    /// lsof 的字段协议不依赖列宽、用户名或 COMMAND 中的空格。
+    static func parseListeners(_ output: String) -> [pid_t: Set<Int>] {
+        var result: [pid_t: Set<Int>] = [:]
+        var pid: pid_t?
+        for line in output.split(separator: "\n") {
+            switch line.first {
+            case "p": pid = pid_t(line.dropFirst())
+            case "n":
+                guard let pid, pid > 1,
+                      let port = Int(line.split(separator: ":").last ?? ""), (1...65535).contains(port) else { continue }
+                result[pid, default: []].insert(port)
+            default: break
+            }
+        }
+        return result
     }
 
     /// 系统自带守护进程（/System、/usr/libexec、/usr/sbin、/sbin）不展示：

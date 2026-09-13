@@ -2,8 +2,7 @@ import Combine
 import Foundation
 import SwiftUI
 
-/// 自定义子项模块：执行用户定义的 shell 命令并展示输出。
-/// 这是用户向面板集成自己内容的第一入口；后续可基于 NotchModule 协议扩展更丰富的插件。
+/// 自定义命令的结果只发布给对应配置；更新配置会取消旧批次并重新执行。
 final class CustomItemsModule: ObservableObject, NotchModule {
     let id = "custom"
     let title = "自定义"
@@ -13,64 +12,101 @@ final class CustomItemsModule: ObservableObject, NotchModule {
     @Published private(set) var isRunning = false
     @Published private(set) var lastRefresh = Date.distantPast
 
+    private let settings: SettingsStore
+    private let queue = DispatchQueue(label: "com.notchdeck.custom", qos: .utility)
     private var cancellables: Set<AnyCancellable> = []
     private var observer: NSObjectProtocol?
+    private var cancellation: Shell.Cancellation?
+    private var generation = 0
+    private var active = false
 
-    var isAvailable: Bool {
-        !SettingsStore.shared.customItems.isEmpty
+    init(settings: SettingsStore = .shared) {
+        self.settings = settings
     }
 
+    var isAvailable: Bool { !settings.customItems.isEmpty }
+
     deinit {
-        if let observer {
-            NotificationCenter.default.removeObserver(observer)
-        }
+        cancellation?.cancel()
+        if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 
     func start() {
-        // 子项增删改 → 立即刷新
-        SettingsStore.shared.$customItems
+        guard !active else { return }
+        active = true
+        settings.$customItems
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.refresh() }
             .store(in: &cancellables)
-
-        // 面板展开时刷新
         observer = NotificationCenter.default.addObserver(
             forName: AppModel.panelDidExpand, object: nil, queue: .main) { [weak self] _ in
-            self?.refresh()
+            // 面板在执行期间反复展开不重复执行同一批命令。
+            guard let self, !self.isRunning else { return }
+            self.refresh()
         }
     }
 
-    func content() -> some View {
-        CustomItemsView(module: self)
+    func stop() {
+        active = false
+        generation += 1
+        cancellation?.cancel()
+        cancellation = nil
+        isRunning = false
+        cancellables.removeAll()
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+        outputs = [:]
     }
 
-    /// 依次执行所有子项命令（后台队列，单条超时 6 秒）
+    func content() -> some View { CustomItemsView(module: self) }
+
     func refresh() {
-        let items = SettingsStore.shared.customItems
+        guard active, settings.config(for: id).enabled else { return }
+        generation += 1
+        let currentGeneration = generation
+        cancellation?.cancel()
+        let token = Shell.Cancellation()
+        cancellation = token
+        let items = settings.customItems
+        outputs = outputs.filter { id, _ in items.contains { $0.id == id } }
         guard !items.isEmpty else {
-            outputs = [:]
+            isRunning = false
             return
         }
-        guard !isRunning else { return }
         isRunning = true
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        queue.async { [weak self] in
             var results: [String: String] = [:]
             for item in items {
-                let output = Shell.run("/bin/zsh", arguments: ["-lc", item.command], timeout: 6)
-                    ?? "（执行失败或超时）"
-                results[item.id] = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !token.isCancelled else { break }
+                let result = Shell.execute("/bin/zsh", arguments: ["-lc", item.command],
+                                           timeout: 6, cancellation: token)
+                results[item.id] = Self.display(result)
             }
             DispatchQueue.main.async {
-                self?.outputs = results
-                self?.isRunning = false
-                self?.lastRefresh = Date()
+                guard let self, self.active, self.generation == currentGeneration,
+                      self.settings.customItems == items else { return }
+                self.outputs = results
+                self.isRunning = false
+                self.cancellation = nil
+                self.lastRefresh = Date()
             }
         }
     }
 
-    func output(for item: CustomItem) -> String? {
-        outputs[item.id]
+    static func display(_ result: Shell.Result) -> String {
+        let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let error = result.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let message: String
+        switch result.completion {
+        case .exited(0): message = output.isEmpty ? "（执行成功，无输出）" : output
+        case .exited(let code): message = "（退出码 \(code)）\n" + (error.isEmpty ? output : error)
+        case .timedOut: message = "（执行超时，已停止）"
+        case .cancelled: message = "（已取消）"
+        case .launchFailed: message = "（启动失败）\n" + error
+        }
+        return message + (result.outputTruncated ? "\n（输出过长，已截断）" : "")
     }
+
+    func output(for item: CustomItem) -> String? { outputs[item.id] }
 }

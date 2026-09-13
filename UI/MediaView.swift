@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 媒体控制：封面、标题、进度、播放控制（系统级正在播放，覆盖常用媒体 App）
+/// 已启用媒体源的封面、标题、进度与播放控制。
 struct MediaView: View {
     @ObservedObject var module: MediaModule
 
@@ -109,10 +109,10 @@ struct MediaView: View {
 
     private func progressBar(for track: MediaTrack) -> some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            let elapsed = min(track.duration,
+            let elapsed = max(0, min(track.duration,
                               track.elapsed + (track.isPlaying
                                                ? context.date.timeIntervalSince(module.trackUpdatedAt)
-                                               : 0))
+                                               : 0)))
             VStack(spacing: 2) {
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {

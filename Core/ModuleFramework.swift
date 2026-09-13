@@ -5,7 +5,7 @@ import SwiftUI
 
 /// 面板子项模块：所有面板内容（内置或自定义）都通过此协议接入 NotchDeck。
 /// 新增模块只需实现本协议并在 `ModuleRegistry` 注册，即可获得：
-/// 设置中的开关/位置配置、常驻区/标签页布局、面板动态高度等能力。
+/// 设置中的开关/位置配置、常驻区/标签页布局、统一滚动与模块生命周期管理。
 protocol NotchModule: ObservableObject {
     /// 稳定标识（持久化配置的 key）
     var id: String { get }
@@ -15,6 +15,9 @@ protocol NotchModule: ObservableObject {
     var systemImage: String { get }
     /// 是否可用；不可用的模块不出现在面板与设置中
     var isAvailable: Bool { get }
+    /// 由注册表统一管理；关闭模块时停止轮询、订阅和命令执行。
+    func start()
+    func stop()
     /// 面板内容
     associatedtype Content: View
     func content() -> Content
@@ -33,6 +36,9 @@ final class ModuleBox: ObservableObject, Identifiable {
     let systemImage: String
     let makeContent: () -> AnyView
     let isAvailable: () -> Bool
+    private let start: () -> Void
+    private let stop: () -> Void
+    private(set) var isActive = false
 
     private var cancellable: AnyCancellable?
 
@@ -41,9 +47,17 @@ final class ModuleBox: ObservableObject, Identifiable {
         title = module.title
         systemImage = module.systemImage
         isAvailable = { [weak module] in module?.isAvailable ?? false }
+        start = { module.start() }
+        stop = { module.stop() }
         makeContent = { AnyView(module.content()) }
         cancellable = module.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
+    }
+
+    func setActive(_ active: Bool) {
+        guard active != isActive else { return }
+        isActive = active
+        active ? start() : stop()
     }
 }
 
@@ -54,11 +68,18 @@ final class ModuleRegistry: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
 
     func register<M: NotchModule>(_ module: M) {
+        guard !boxes.contains(where: { $0.id == module.id }) else { return }
         let box = ModuleBox(module)
         box.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
         boxes.append(box)
+    }
+
+    func updateActivity(settings: SettingsStore) {
+        for box in boxes {
+            box.setActive(settings.config(for: box.id).enabled && box.isAvailable())
+        }
     }
 }
 

@@ -79,6 +79,7 @@ final class AppLauncherModule: ObservableObject, NotchModule {
     }
 
     func start() {
+        guard workspaceObservers.isEmpty else { return }
         refreshRunning()
         let workspaceCenter = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification,
@@ -93,6 +94,15 @@ final class AppLauncherModule: ObservableObject, NotchModule {
             forName: AppModel.panelDidExpand, object: nil, queue: .main) { [weak self] _ in
             self?.refreshRunning()
         }
+    }
+
+    func stop() {
+        workspaceObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
+        workspaceObservers.removeAll()
+        if let panelObserver {
+            NotificationCenter.default.removeObserver(panelObserver)
+        }
+        panelObserver = nil
     }
 
     func content() -> some View {

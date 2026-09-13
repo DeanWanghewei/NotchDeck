@@ -1,10 +1,11 @@
 import SwiftUI
 
 /// 监听端口进程：块状网格 / 行列表两种展示（可在面板头部或设置中切换），
-/// 可按 App 进程 / 脚本进程过滤；固定视口高度内滚动
+/// 可按 App 进程 / 脚本进程过滤；由面板统一滚动
 struct NodeListView: View {
     @ObservedObject var scanner: NodeProcessScanner
     @ObservedObject private var settings = SettingsStore.shared
+    @State private var terminationError: String?
 
     private var filtered: [NodeProcessInfo] {
         scanner.processes.filter { process in
@@ -22,20 +23,20 @@ struct NodeListView: View {
                 emptyState
                     .frame(maxWidth: .infinity, minHeight: 96)
             } else {
-                // 固定尺寸窗口内可安全撑满剩余空间（无动态窗口高度反馈）
-                ScrollView(.vertical, showsIndicators: true) {
-                    Group {
-                        if settings.processDisplay == "grid" {
-                            grid
-                        } else {
-                            rows
-                        }
-                    }
-                    .padding(1)
+                if settings.processDisplay == "grid" {
+                    grid
+                } else {
+                    rows
                 }
-                .frame(maxHeight: .infinity)
             }
         }
+        .alert("无法结束进程", isPresented: Binding(
+            get: { terminationError != nil },
+            set: { if !$0 { terminationError = nil } })) {
+                Button("好", role: .cancel) { terminationError = nil }
+            } message: {
+                Text(terminationError ?? "")
+            }
     }
 
     // MARK: - 头部（计数 + 展示方式切换）
@@ -195,7 +196,7 @@ struct NodeListView: View {
     }
 
     private func kill(_ process: NodeProcessInfo) {
-        NodeProcessKiller.terminate(pid: process.pid)
+        terminationError = NodeProcessKiller.terminate(process.identity)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             scanner.scan()
         }
