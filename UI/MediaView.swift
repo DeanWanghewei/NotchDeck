@@ -24,11 +24,31 @@ struct MediaView: View {
                 controls(for: track)
             }
             .frame(minHeight: 64)
-        } else if module.noSourceConfigured {
+        } else if module.noSourceConfigured && !module.experimentalActive {
             noSourceState
+        } else if !module.experimentalAvailable {
+            adapterUnavailableState
         } else {
             emptyState
         }
+    }
+
+    /// 实验性检测开启但连续失败：提示已回退
+    private var adapterUnavailableState: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "waveform.badge.exclamationmark")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("系统级检测暂不可用")
+                    .font(.callout)
+                Text("已回退到手动媒体源，将定期重试")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .frame(minHeight: 56)
     }
 
     /// 未配置媒体源：引导去设置（默认最小权限，添加源后才申请授权）
@@ -79,11 +99,11 @@ struct MediaView: View {
     }
 
     private func subtitle(for track: MediaTrack) -> String {
-        var parts: [String] = [track.artist.isEmpty ? "未知艺术家" : track.artist]
-        if !track.appName.isEmpty {
-            parts.append("· \(track.appName)")
-        }
-        return parts.joined(separator: " ")
+        var parts: [String] = []
+        if !track.artist.isEmpty { parts.append(track.artist) }
+        if !track.appName.isEmpty { parts.append(track.appName) }
+        if parts.isEmpty { parts.append("未知来源") }
+        return parts.joined(separator: " · ")
     }
 
     private func artworkButton(for track: MediaTrack) -> some View {

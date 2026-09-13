@@ -66,6 +66,10 @@ final class SettingsStore: ObservableObject {
     @Published var showScriptProcesses: Bool {
         didSet { defaults.set(showScriptProcesses, forKey: Keys.showScriptProcesses) }
     }
+    /// 实验性：直接读取系统"正在播放"（支持任意播放器，如飞牛影视/IINA/浏览器）
+    @Published var experimentalNowPlaying: Bool {
+        didSet { defaults.set(experimentalNowPlaying, forKey: Keys.experimentalNowPlaying) }
+    }
     /// 系统监控：CPU 近 15 分钟热力图
     @Published var showCPUHeatmap: Bool {
         didSet { defaults.set(showCPUHeatmap, forKey: Keys.showCPUHeatmap) }
@@ -112,6 +116,7 @@ final class SettingsStore: ObservableObject {
         static let showCPUHeatmap = "settings.showCPUHeatmap"
         static let showSwap = "settings.showSwap"
         static let showBattery = "settings.showBattery"
+        static let experimentalNowPlaying = "settings.experimentalNowPlaying"
     }
 
     /// 各模块的默认布局
@@ -148,6 +153,7 @@ final class SettingsStore: ObservableObject {
         showCPUHeatmap = defaults.object(forKey: Keys.showCPUHeatmap) as? Bool ?? true
         showSwap = defaults.object(forKey: Keys.showSwap) as? Bool ?? true
         showBattery = defaults.object(forKey: Keys.showBattery) as? Bool ?? true
+        experimentalNowPlaying = defaults.object(forKey: Keys.experimentalNowPlaying) as? Bool ?? false
     }
 
     // MARK: - 模块配置

@@ -17,12 +17,18 @@ targets:
       - path: Core
       - path: Modules
       - path: UI
-      - path: Resources
+      - path: Resources/Assets.xcassets
+      # 实验性系统级正在播放：以原样目录拷入资源（含 80B 对齐的 framework 结构）
+      - path: Resources/MediaRemoteAdapter.framework
+        type: folder
+        buildPhase: resources
+      - path: Resources/mediaremote-adapter.pl
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.notchdeck.app
         PRODUCT_NAME: NotchDeck
-        MARKETING_VERSION: "0.7.1"
+        MARKETING_VERSION: "0.10.0"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_LSUIElement: true

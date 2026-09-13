@@ -75,6 +75,17 @@ struct SettingsView: View {
     @ViewBuilder
     private var moduleSections: some View {
         Section("媒体源") {
+            Toggle(isOn: $settings.experimentalNowPlaying) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("实验性：读取系统正在播放")
+                    Text("支持任意播放器（飞牛影视 / IINA / 浏览器等），无需逐个添加")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .onChange(of: settings.experimentalNowPlaying) { _ in
+                AppModel.shared.media.requestRefresh()
+            }
             let installed = MediaModule.installedSources
             if installed.isEmpty {
                 Text("未检测到受支持的媒体 App（Music / Spotify）")
@@ -98,10 +109,15 @@ struct SettingsView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            Text("默认不申请任何权限。开启媒体源后，该 App 运行时首次读取会请求自动化授权。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
+                Text("默认不申请任何权限。开启媒体源后，该 App 运行时首次读取会请求自动化授权。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if settings.experimentalNowPlaying {
+                    Text("实验性说明：经由系统 Perl 加载只读适配器读取系统「正在播放」汇总（机制依赖 macOS 15.4+ 的 com.apple.perl 授权路径），随系统更新可能失效；失效时自动回退到上方手动媒体源。开启后优先于手动源。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
         Section("应用快捷控制") {
             if settings.panelApps.isEmpty {

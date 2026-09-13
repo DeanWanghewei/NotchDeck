@@ -45,6 +45,10 @@ final class MediaModule: ObservableObject, NotchModule {
 
     @Published private(set) var track: MediaTrack?
     private(set) var trackUpdatedAt = Date()
+    /// 实验性系统级检测的运行状态：连续失败后置 false，定期自动重试
+    @Published private(set) var experimentalAvailable = true
+    /// 当前曲目是否来自实验性系统级检测（决定控制指令的走向）
+    private(set) var trackViaAdapter = false
     private let settings = SettingsStore.shared
     private let scriptQueue = DispatchQueue(label: "com.notchdeck.media", qos: .utility)
     private var pollTimer: Timer?
@@ -86,6 +90,8 @@ final class MediaModule: ObservableObject, NotchModule {
 
     func content() -> some View { MediaView(module: self) }
     var noSourceConfigured: Bool { enabledSources.isEmpty }
+    /// 实验性系统级检测是否处于开启状态（决定空态的呈现）
+    var experimentalActive: Bool { settings.experimentalNowPlaying }
 
     private var enabledSources: [MediaSource] {
         Self.installedSources.filter { settings.mediaSources.contains($0.bundleID) }
@@ -120,7 +126,26 @@ final class MediaModule: ObservableObject, NotchModule {
     }
 
     private func send(_ command: String) {
-        guard active, let bundleID = track?.appBundleID,
+        guard active else { return }
+        // 实验性路径：当前曲目来自系统级检测时，控制指令同样经适配器发送
+        if trackViaAdapter {
+            guard settings.experimentalNowPlaying, experimentalAvailable,
+                  let paths = Self.adapterPaths else { return }
+            let id: Int
+            switch command {
+            case "playpause": id = 2   // kMRTogglePlayPause
+            case "nextTrack": id = 4   // kMRNextTrack
+            default: id = 5            // kMRPreviousTrack
+            }
+            scriptQueue.async { [weak self] in
+                Shell.execute(paths.perl, arguments: [paths.script, paths.framework, "send", String(id)], timeout: 4)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.requestRefresh()
+                }
+            }
+            return
+        }
+        guard let bundleID = track?.appBundleID,
               enabledSources.contains(where: { $0.bundleID == bundleID }) else { return }
         invalidateRefresh()
         let version = generation
@@ -141,6 +166,22 @@ final class MediaModule: ObservableObject, NotchModule {
 
     func refresh() {
         guard active, !refreshing else { return }
+        // 实验性系统级检测优先：读取任意播放器的"正在播放"（飞牛/IINA/浏览器等）
+        if settings.experimentalNowPlaying {
+            if experimentalAvailable, let paths = Self.adapterPaths {
+                refreshViaAdapter(paths)
+                return
+            }
+            // 不可用时每 60 秒重试一次探测
+            if !experimentalAvailable, Date().timeIntervalSince(lastAdapterFailure) > 60 {
+                experimentalAvailable = true
+                adapterFailures = 0
+                if let paths = Self.adapterPaths {
+                    refreshViaAdapter(paths)
+                    return
+                }
+            }
+        }
         // 不向未运行的应用发送事件，避免后台轮询启动应用或弹出授权。
         let runningIDs = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
         let candidates = enabledSources.filter { runningIDs.contains($0.bundleID) }
@@ -185,6 +226,100 @@ final class MediaModule: ObservableObject, NotchModule {
                 }
             }
         }
+    }
+
+    // MARK: - 实验性：系统级正在播放（mediaremote-adapter，BSD-3，见 Vendor/mediaremote-adapter）
+
+    private var adapterFailures = 0
+    private var lastAdapterFailure = Date.distantPast
+
+    /// 资源目录中的 perl 脚本与适配器框架（随 App 打包）
+    static var adapterPaths: (perl: String, script: String, framework: String)? {
+        guard let resourceURL = Bundle.main.resourceURL else { return nil }
+        let script = resourceURL.appendingPathComponent("mediaremote-adapter.pl").path
+        let framework = resourceURL.appendingPathComponent("MediaRemoteAdapter.framework").path
+        let perl = "/usr/bin/perl"
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: script), fm.fileExists(atPath: framework), fm.fileExists(atPath: perl) else {
+            return nil
+        }
+        return (perl, script, framework)
+    }
+
+    /// 经系统 Perl（com.apple.perl5，mediaremoted 仅信任 com.apple.* 客户端）读取系统正在播放
+    private func refreshViaAdapter(_ paths: (perl: String, script: String, framework: String)) {
+        refreshing = true
+        let version = generation
+        let token = Shell.Cancellation()
+        cancellation = token
+        scriptQueue.async { [weak self] in
+            let result = Shell.execute(paths.perl,
+                                       arguments: [paths.script, paths.framework, "get"],
+                                       timeout: 4, cancellation: token)
+            DispatchQueue.main.async {
+                guard let self, self.active, self.generation == version else { return }
+                self.refreshing = false
+                self.cancellation = nil
+                guard result.completion == .exited(0),
+                      let json = (try? JSONSerialization.jsonObject(with: Data(result.output.utf8))) as? [String: Any] else {
+                    self.handleAdapterFailure()
+                    return
+                }
+                self.adapterFailures = 0
+                self.experimentalAvailable = true
+                let sampledAt = Date()
+                var chosen = Self.track(fromAdapterJSON: json)
+                if chosen != nil, chosen!.artworkKey == self.track?.artworkKey {
+                    chosen!.artwork = self.track?.artwork
+                }
+                if chosen != nil, chosen!.appName.isEmpty { chosen!.appName = "正在播放" }
+                self.trackViaAdapter = chosen != nil
+                if chosen != nil {
+                    self.trackUpdatedAt = sampledAt
+                    self.track = chosen
+                } else {
+                    self.track = nil
+                    self.artworkKey = ""
+                    self.artworkTask?.cancel()
+                }
+            }
+        }
+    }
+
+    /// 适配器 JSON → MediaTrack；无播放（无标题）时返回 nil
+    static func track(fromAdapterJSON json: [String: Any]) -> MediaTrack? {
+        guard let title = json["title"] as? String, !title.isEmpty else { return nil }
+        var track = MediaTrack()
+        track.title = title
+        track.artist = json["artist"] as? String ?? ""
+        track.album = json["album"] as? String ?? ""
+        if let playing = json["playing"] as? Bool {
+            track.isPlaying = playing
+        } else {
+            track.isPlaying = (json["playbackRate"] as? Double ?? 0) > 0
+        }
+        track.duration = json["duration"] as? Double ?? 0
+        track.elapsed = min(max(0, json["elapsedTime"] as? Double ?? 0), max(0, json["duration"] as? Double ?? .greatestFiniteMagnitude))
+        track.appBundleID = json["bundleIdentifier"] as? String
+        if let pid = json["processIdentifier"] as? Int,
+           let running = NSRunningApplication(processIdentifier: pid_t(pid)),
+           let name = running.localizedName {
+            track.appName = name
+        } else if let bundleID = track.appBundleID {
+            track.appName = (bundleID as NSString).lastPathComponent
+        }
+        if let base64 = json["artworkData"] as? String,
+           let data = Data(base64Encoded: base64),
+           let image = NSImage(data: data) {
+            track.artwork = image
+        }
+        return track
+    }
+
+    private func handleAdapterFailure() {
+        adapterFailures += 1
+        lastAdapterFailure = Date()
+        if adapterFailures >= 3 { experimentalAvailable = false }
     }
 
     private func loadArtwork(for track: MediaTrack) {
