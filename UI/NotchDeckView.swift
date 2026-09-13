@@ -25,17 +25,32 @@ private struct PanelRoot: View {
     var body: some View {
         Group {
             if settings.notchAttached {
-                // 接壤模式：黑色延伸带与硬件刘海同色融合，卡片顶部直角、底部大圆角
-                VStack(spacing: 0) {
-                    Color.black
-                        .frame(height: PanelMetrics.menuBarHeight)
+                // 接壤模式（分层渲染，不用 clipShape）：
+                // 黑色凸形打底（颈部与硬件刘海同色融合）+ 卡片底部圆角裁剪 + 凹角补件
+                let cardTop = PanelMetrics.menuBarHeight + PanelMetrics.gapBelowMenuBar
+                let neckWidth = PanelMetrics.hotZoneWidth
+                let fillet: CGFloat = 14
+                let neckL = (PanelMetrics.width - neckWidth) / 2
+                let neckR = (PanelMetrics.width + neckWidth) / 2
+                ZStack(alignment: .top) {
+                    TuanShape(neckWidth: neckWidth,
+                              cardTop: cardTop,
+                              cornerRadius: PanelMetrics.cornerRadius,
+                              fillet: fillet)
+                        .fill(Color.black)
                     card
+                        .padding(.top, cardTop)
+                        .clipShape(bottomRoundedRectangle(radius: PanelMetrics.cornerRadius))
+                    ConcaveFilletPiece(radius: fillet)
+                        .fill(Color.black)
+                        .frame(width: fillet, height: fillet)
+                        .position(x: neckL - fillet + fillet / 2, y: cardTop - fillet + fillet / 2)
+                    ConcaveFilletPiece(radius: fillet)
+                        .fill(Color.black)
+                        .scaleEffect(x: -1)
+                        .frame(width: fillet, height: fillet)
+                        .position(x: neckR + fillet - fillet / 2, y: cardTop - fillet + fillet / 2)
                 }
-                .clipShape(bottomRoundedRectangle(radius: PanelMetrics.cornerRadius))
-                .overlay(
-                    bottomRoundedRectangle(radius: PanelMetrics.cornerRadius)
-                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-                )
             } else {
                 card
                     .clipShape(RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous))

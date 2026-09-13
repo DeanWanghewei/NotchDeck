@@ -144,13 +144,13 @@ final class NotchWindowController: NSObject {
     // MARK: - 坐标
 
     /// 固定尺寸窗口。悬浮模式：顶部在菜单栏下方留 gap；
-    /// 接壤模式：顶部贴屏幕顶端，窗口包含菜单栏高度的黑色"刘海延伸带"
+    /// 接壤模式：凸字形——颈部（刘海同宽）从屏幕顶端跨过菜单栏与间隙连接卡片
     private func frame(on screen: NSScreen) -> NSRect {
         let attached = SettingsStore.shared.notchAttached
-        let bandHeight = attached ? PanelMetrics.menuBarHeight(on: screen) : 0
+        let neckHeight = attached ? PanelMetrics.menuBarHeight(on: screen) + PanelMetrics.gapBelowMenuBar : 0
         let width = min(PanelMetrics.width, screen.visibleFrame.width)
         let top = attached ? screen.frame.maxY : topY(on: screen)
-        let height = min(PanelMetrics.height + bandHeight,
+        let height = min(PanelMetrics.height + neckHeight,
                          max(1, top - screen.visibleFrame.minY))
         return NSRect(x: screen.visibleFrame.midX - width / 2,
                       y: top - height, width: width, height: height)
