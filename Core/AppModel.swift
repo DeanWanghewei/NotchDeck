@@ -69,6 +69,11 @@ final class AppModel: ObservableObject {
 
     // MARK: - 布局计算
 
+    /// 全部模块，按设置中的显示顺序（未排序的按注册顺序附加在后）
+    var orderedBoxes: [ModuleBox] {
+        sortedByDisplayOrder(registry.boxes)
+    }
+
     /// 常驻顶部且可用的模块
     var pinnedModules: [ModuleBox] {
         effectiveModules(pinned: true)
@@ -80,10 +85,16 @@ final class AppModel: ObservableObject {
     }
 
     private func effectiveModules(pinned: Bool) -> [ModuleBox] {
-        registry.boxes.filter { box in
+        sortedByDisplayOrder(registry.boxes.filter { box in
             guard box.isAvailable() else { return false }
             let config = settings.config(for: box.id)
             return config.enabled && config.pinned == pinned
-        }
+        })
+    }
+
+    private func sortedByDisplayOrder(_ boxes: [ModuleBox]) -> [ModuleBox] {
+        let order = settings.effectiveModuleOrder(registryIDs: registry.boxes.map(\.id))
+        let rank = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1, $0) })
+        return boxes.sorted { (rank[$0.id] ?? Int.max) < (rank[$1.id] ?? Int.max) }
     }
 }

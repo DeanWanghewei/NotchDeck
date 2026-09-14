@@ -42,6 +42,10 @@ final class SettingsStore: ObservableObject {
     @Published var moduleConfigs: [String: ModuleConfig] {
         didSet { persist(moduleConfigs, forKey: Keys.moduleConfigs) }
     }
+    /// 模块显示顺序（moduleId 列表，用户在设置中调整）；未记录的模块按注册顺序附加在后
+    @Published var moduleOrder: [String] {
+        didSet { defaults.set(moduleOrder, forKey: Keys.moduleOrder) }
+    }
     /// 用户自定义子项
     @Published var customItems: [CustomItem] {
         didSet { persist(customItems, forKey: Keys.customItems) }
@@ -111,6 +115,7 @@ final class SettingsStore: ObservableObject {
         static let hotKeyCode = "settings.hotKeyCode"
         static let hotKeyModifiers = "settings.hotKeyModifiers"
         static let moduleConfigs = "settings.moduleConfigs"
+        static let moduleOrder = "settings.moduleOrder"
         static let customItems = "settings.customItems"
         static let mediaSources = "settings.mediaSources"
         static let panelApps = "settings.panelApps"
@@ -149,6 +154,7 @@ final class SettingsStore: ObservableObject {
             ?? UInt32(cmdKey | shiftKey)
 
         moduleConfigs = Self.decode([String: ModuleConfig].self, forKey: Keys.moduleConfigs, defaults: defaults) ?? [:]
+        moduleOrder = defaults.stringArray(forKey: Keys.moduleOrder) ?? []
         customItems = Self.decode([CustomItem].self, forKey: Keys.customItems, defaults: defaults) ?? []
         mediaSources = defaults.stringArray(forKey: Keys.mediaSources) ?? []
         panelApps = Self.decode([PanelApp].self, forKey: Keys.panelApps, defaults: defaults) ?? []
@@ -174,6 +180,29 @@ final class SettingsStore: ObservableObject {
         var configs = moduleConfigs
         configs[id] = config
         moduleConfigs = configs
+    }
+
+    // MARK: - 模块排序
+
+    /// 完整显示顺序：用户排序在前，未记录/新增模块按注册顺序附加在后（去重、剔除未知 id）
+    func effectiveModuleOrder(registryIDs: [String]) -> [String] {
+        let known = Set(registryIDs)
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for id in moduleOrder where known.contains(id) && seen.insert(id).inserted {
+            ordered.append(id)
+        }
+        ordered.append(contentsOf: registryIDs.filter { !seen.contains($0) })
+        return ordered
+    }
+
+    /// 相对移动一位（offset -1 上移 / +1 下移），越界时不写入
+    func moveModule(_ id: String, offset: Int, registryIDs: [String]) {
+        var ordered = effectiveModuleOrder(registryIDs: registryIDs)
+        guard let index = ordered.firstIndex(of: id),
+              ordered.indices.contains(index + offset) else { return }
+        ordered.swapAt(index, index + offset)
+        moduleOrder = ordered
     }
 
     // MARK: - 持久化

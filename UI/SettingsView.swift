@@ -21,10 +21,11 @@ struct SettingsView: View {
         case process = "进程监控"
         case custom = "自定义"
         case general = "通用"
+        case about = "关于"
         var id: String { rawValue }
     }
 
-    /// UI 调试用：-NotchDeckSettingsTab <模块|进程监控|自定义|通用>
+    /// UI 调试用：-NotchDeckSettingsTab <模块|进程监控|自定义|通用|关于>
     private static var initialTab: SettingsTab {
         let arguments = ProcessInfo.processInfo.arguments
         if let index = arguments.firstIndex(of: "-NotchDeckSettingsTab"),
@@ -55,6 +56,7 @@ struct SettingsView: View {
                 case .process: processSection
                 case .custom: customSection
                 case .general: generalSections
+                case .about: aboutSections
                 }
             }
             .formStyle(.grouped)
@@ -189,7 +191,7 @@ struct SettingsView: View {
         }
 
         Section {
-            ForEach(AppModel.shared.registry.boxes) { box in
+            ForEach(AppModel.shared.orderedBoxes) { box in
                 ModuleConfigRow(box: box)
             }
         } header: {
@@ -203,10 +205,10 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("常驻：固定显示在面板顶部，呼出即见。\n切换：收进面板下方标签页，点图标切换。\n关闭：不出现在面板，并停止后台采集。")
+                .help("常驻：固定显示在面板顶部，呼出即见。\n切换：收进面板下方标签页，点图标切换。\n关闭：不出现在面板，并停止后台采集。\n排序：用行尾的上下箭头调整模块在面板中的前后顺序。")
             }
         } footer: {
-            Text("常驻 = 固定在面板顶部；切换 = 收进下方标签页。关闭后停止后台采集。")
+            Text("常驻 = 固定在面板顶部；切换 = 收进下方标签页。关闭后停止后台采集。行尾上下箭头调整模块顺序，常驻区与标签页同步生效。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -337,6 +339,52 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
         }
     }
+    // MARK: - 关于页
+
+    @ViewBuilder
+    private var aboutSections: some View {
+        Section {
+            VStack(spacing: 6) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .frame(width: 64, height: 64)
+                Text("NotchDeck")
+                    .font(.title2.weight(.semibold))
+                Text("版本 \(Self.marketingVersion)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+
+            Text("把 MacBook Pro 的刘海变成随手可用的信息控制台。悬停刘海展开悬浮信息岛，媒体控制、系统监控、进程管理、音量、应用快捷启动与自定义命令小部件按模块自由组合（常驻 + 标签页双层布局）。默认最小权限：不申请任何权限即完整可用，媒体源按需添加、按需授权，所有数据仅本地处理，不上传任何信息。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        Section("开源") {
+            LabeledContent("项目地址") {
+                Link("github.com/DeanWanghewei/NotchDeck",
+                     destination: URL(string: "https://github.com/DeanWanghewei/NotchDeck")!)
+            }
+            LabeledContent("开源协议") {
+                Text("MIT License")
+            }
+            Text("本项目以 MIT 协议开源，完整协议文本见仓库根目录的 LICENSE 文件。内置的实验性「系统正在播放」功能使用了第三方开源组件 MediaRemoteAdapter（BSD 3-Clause License，© Jonas van den Berg and contributors）。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            LabeledContent("问题反馈") {
+                Link("提交 Issue", destination: URL(string: "https://github.com/DeanWanghewei/NotchDeck/issues")!)
+            }
+        }
+    }
+
+    private static var marketingVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+    }
+
     // MARK: - 媒体源绑定
 
     /// 启用即触发一次读取：授权弹窗在用户主动开启的时刻出现，语境清晰
@@ -401,7 +449,36 @@ private struct ModuleConfigRow: View {
                 .frame(width: 110)
                 .disabled(!enabled)
             }
+            reorderControls
         }
+    }
+
+    /// 上/下移动一位；面板常驻区与标签页按此顺序显示
+    private var reorderControls: some View {
+        let registryIDs = AppModel.shared.registry.boxes.map(\.id)
+        let index = settings.effectiveModuleOrder(registryIDs: registryIDs)
+            .firstIndex(of: box.id)
+        return VStack(spacing: 1) {
+            reorderButton("chevron.up", offset: -1, disabled: (index ?? 0) <= 0, help: "上移")
+            reorderButton("chevron.down", offset: 1,
+                          disabled: index.map { $0 >= registryIDs.count - 1 } ?? true, help: "下移")
+        }
+    }
+
+    private func reorderButton(_ symbol: String, offset: Int, disabled: Bool, help: String) -> some View {
+        Button {
+            settings.moveModule(box.id, offset: offset,
+                                registryIDs: AppModel.shared.registry.boxes.map(\.id))
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 8, weight: .semibold))
+                .frame(width: 18, height: 10)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(disabled ? .tertiary : .secondary)
+        .disabled(disabled)
+        .help(help)
     }
 }
 

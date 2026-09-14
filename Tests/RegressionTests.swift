@@ -87,6 +87,29 @@ final class SettingsAndLifecycleTests: XCTestCase {
         XCTAssertEqual(restored.hotKeyModifiers, UInt32(cmdKey | shiftKey))
     }
 
+    func testModuleOrderPersistsNormalizesAndIgnoresBoundaryMoves() {
+        let settings = SettingsStore(defaults: defaults)
+        let registryIDs = ["media", "volume", "apps", "system", "node", "custom"]
+        // 未设置排序时按注册顺序原样输出
+        XCTAssertEqual(settings.effectiveModuleOrder(registryIDs: registryIDs), registryIDs)
+        // 上移一位，与重启后读取一致
+        settings.moveModule("system", offset: -1, registryIDs: registryIDs)
+        XCTAssertEqual(settings.effectiveModuleOrder(registryIDs: registryIDs),
+                       ["media", "volume", "system", "apps", "node", "custom"])
+        XCTAssertEqual(SettingsStore(defaults: defaults).moduleOrder,
+                       ["media", "volume", "system", "apps", "node", "custom"])
+        // 边界移动不写入任何变更
+        settings.moveModule("media", offset: -1, registryIDs: registryIDs)
+        settings.moveModule("custom", offset: 1, registryIDs: registryIDs)
+        XCTAssertEqual(settings.moduleOrder,
+                       ["media", "volume", "system", "apps", "node", "custom"])
+        // 历史遗留未知 id 被剔除，新增模块按注册顺序附加在后
+        defaults.set(["custom", "gone", "media"], forKey: "settings.moduleOrder")
+        let restored = SettingsStore(defaults: defaults)
+        XCTAssertEqual(restored.effectiveModuleOrder(registryIDs: registryIDs),
+                       ["custom", "media", "volume", "apps", "system", "node"])
+    }
+
     func testRegistryStartsOnceAndStopsDisabledOrUnavailableModules() {
         let settings = SettingsStore(defaults: defaults)
         let registry = ModuleRegistry()
