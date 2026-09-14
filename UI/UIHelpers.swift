@@ -13,17 +13,64 @@ func bottomRoundedRectangle(radius: CGFloat) -> UnevenRoundedRectangle {
 /// 毛玻璃背景（NSVisualEffectView，behindWindow 混合）
 struct VisualEffectBackground: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .hudWindow
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = material
         view.blendingMode = .behindWindow
         view.state = .active
+        view.appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua)
         return view
     }
 
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
         nsView.material = material
+        nsView.appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua)
+    }
+}
+
+/// 新系统使用公开的 Liquid Glass API；旧系统保留毛玻璃，辅助功能优先使用不透明背景。
+struct PanelSurface: View {
+    var attached: Bool
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    @ViewBuilder
+    var body: some View {
+        if reduceTransparency || contrast == .increased {
+            if attached {
+                Color.black
+            } else {
+                Color(nsColor: .windowBackgroundColor)
+            }
+        } else if attached {
+            // 颈部与卡片同为黑色底，避免系统浅色玻璃在刘海下形成亮色接缝。
+            Color.black
+                .overlay(VisualEffectBackground().opacity(0.55))
+        } else {
+            floatingSurface
+        }
+    }
+
+    @ViewBuilder
+    private var floatingSurface: some View {
+        // Swift 6.2 / Xcode 26 起提供玻璃 API；仍允许用旧 SDK 构建毛玻璃版本。
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            Color.clear.glassEffect(.regular, in:
+                RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous))
+        } else {
+            legacySurface
+        }
+        #else
+        legacySurface
+        #endif
+    }
+
+    private var legacySurface: some View {
+        VisualEffectBackground()
+            .overlay(Color(nsColor: .windowBackgroundColor).opacity(0.4))
     }
 }
 
@@ -151,12 +198,13 @@ struct AdaptedBadge: View {
 /// 按压缩放反馈的图标按钮样式
 struct ScalingButtonStyle: ButtonStyle {
     var pressedScale: CGFloat = 0.85
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? pressedScale : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? pressedScale : 1)
             .opacity(configuration.isPressed ? 0.75 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.55), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.55), value: configuration.isPressed)
     }
 }
 

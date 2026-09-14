@@ -2,6 +2,7 @@ import SwiftUI
 
 /// 底部标签栏：图标式胶囊切换
 struct ModuleTabBar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let boxes: [ModuleBox]
     @Binding var selection: String?
 
@@ -19,7 +20,7 @@ struct ModuleTabBar: View {
     private func tabButton(_ box: ModuleBox) -> some View {
         let isSelected = box.id == (selection ?? boxes.first?.id)
         return Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8)) {
                 selection = box.id
             }
         } label: {
@@ -34,7 +35,9 @@ struct ModuleTabBar: View {
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(box.title)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         .help(box.title)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: selection)
+        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: selection)
     }
 }

@@ -72,8 +72,7 @@ final class MouseTracker {
 
     /// 热区与面板使用同一块刘海屏，且不延伸到其上方的其他显示器。
     private static func isMouseInNotchArea(_ point: NSPoint) -> Bool {
-        guard let screen = PanelMetrics.targetScreen, screen.safeAreaInsets.top > 0 else { return false }
-        return point.y <= screen.frame.maxY && point.y > screen.frame.maxY - 5 &&
-            abs(point.x - screen.frame.midX) < PanelMetrics.hotZoneWidth / 2
+        guard let screen = PanelMetrics.targetScreen else { return false }
+        return PanelScreenGeometry(screen: screen).containsInHotZone(point)
     }
 }

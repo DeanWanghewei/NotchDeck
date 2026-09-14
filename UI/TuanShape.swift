@@ -6,6 +6,7 @@ import SwiftUI
 struct TuanShape: Shape {
     /// 颈部宽度（与刘海同宽）
     var neckWidth: CGFloat
+    var neckCenterX: CGFloat? = nil
     /// 卡片顶缘 y（菜单栏高 + 间隙）
     var cardTop: CGFloat
     var cornerRadius: CGFloat
@@ -16,11 +17,13 @@ struct TuanShape: Shape {
         var p = Path()
         let w = rect.width
         let h = rect.height
-        let neckL = (w - neckWidth) / 2
-        let neckR = (w + neckWidth) / 2
+        let center = neckCenterX ?? w / 2
+        let neckL = center - neckWidth / 2
+        let neckR = center + neckWidth / 2
         let ct = min(cardTop, h - 1)
         let r = min(cornerRadius, w / 2, max(1, (h - ct) / 2))
-        let f = min(fillet, neckWidth / 2 - 1, max(1, neckL - r - 1), max(1, ct / 2))
+        let f = min(fillet, neckWidth / 2 - 1,
+                    max(1, min(neckL, w - neckR) - r - 1), max(1, ct / 2))
 
         func lineTo(_ x: CGFloat, _ y: CGFloat) {
             p.addLine(to: CGPoint(x: x, y: y))
