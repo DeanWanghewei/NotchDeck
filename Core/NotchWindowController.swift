@@ -11,7 +11,7 @@ enum PanelState {
     case collapsing
 }
 
-/// 刘海面板管理：无边框、非激活、statusBar 层级；
+/// 刘海面板管理：无边框、非激活、statusBar 层级，可加入其他应用的全屏空间；
 /// 顶部固定在菜单栏下方，固定尺寸并限制在当前屏幕可见区域内。
 final class NotchWindowController: NSObject {
     static let shared = NotchWindowController()
@@ -36,8 +36,12 @@ final class NotchWindowController: NSObject {
                             styleMask: [.borderless, .nonactivatingPanel],
                             backing: .buffered,
                             defer: false)
+        panel.isFloatingPanel = true
         panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        // canJoinAllSpaces 只描述 Space 归属；macOS 13+ 还需显式允许加入其他
+        // 应用的窗口集合/全屏空间，避免编辑器等应用的全屏窗口将面板排除在外。
+        panel.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications,
+                                    .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
@@ -60,9 +64,10 @@ final class NotchWindowController: NSObject {
 
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .merge(with: NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.activeSpaceDidChangeNotification),
-                   NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification))
+                   NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification),
+                   NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification))
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.refreshFrame() }
+            .sink { [weak self] _ in self?.restorePresentation() }
             .store(in: &subscriptions)
         // 接壤开关切换时立即重排窗口
         SettingsStore.shared.$notchAttached
@@ -70,6 +75,14 @@ final class NotchWindowController: NSObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.refreshFrame() }
             .store(in: &subscriptions)
+    }
+
+    /// 全屏切换/激活编辑器可能重排窗口层次；恢复已展开的面板，不激活 NotchDeck。
+    /// 通知排队期间用户可能已经收起面板，必须按当前状态决定是否重新置前。
+    private func restorePresentation() {
+        refreshFrame()
+        guard state == .expanding || state == .expanded else { return }
+        panel?.orderFrontRegardless()
     }
 
     /// 按当前配置重排窗口（收起状态下也生效，切换配置无感）
