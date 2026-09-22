@@ -572,7 +572,8 @@ private struct CustomItemRow: View {
 
 // MARK: - 自定义子项编辑
 
-private struct CustomItemEditView: View {
+/// 命令用多行编辑器：长命令自动换行完整可见，可直接粘贴多行脚本（整串交给 zsh -lc 执行）
+struct CustomItemEditView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var settings = SettingsStore.shared
     @State private var name = ""
@@ -609,10 +610,7 @@ private struct CustomItemEditView: View {
                 Text(commandCaption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextField(commandPlaceholder, text: $command, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(2...4)
-                    .font(.system(size: 12, design: .monospaced))
+                commandEditor
             }
             HStack {
                 Spacer()
@@ -631,7 +629,26 @@ private struct CustomItemEditView: View {
             }
         }
         .padding(20)
-        .frame(width: 380, height: 300)
+        .frame(width: 520, height: 460)
+    }
+
+    /// 多行命令编辑器：占位提示在空内容时显示，长内容滚动查看
+    private var commandEditor: some View {
+        ZStack(alignment: .topLeading) {
+            TextEditor(text: $command)
+                .font(.system(size: 12, design: .monospaced))
+                .frame(minHeight: 150)
+                .padding(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.15)))
+            if command.isEmpty {
+                Text(commandPlaceholder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .padding(EdgeInsets(top: 12, leading: 10, bottom: 0, trailing: 10))
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private var displayHint: String {
@@ -644,13 +661,15 @@ private struct CustomItemEditView: View {
     }
 
     private var commandCaption: String {
-        display == .heatmap ? "命令（zsh 执行，超时 6 秒，输出数字）" : "命令（zsh 执行，超时 6 秒）"
+        display == .heatmap
+            ? "命令（zsh 执行，超时 6 秒，输出数字；支持多行脚本）"
+            : "命令（zsh 执行，超时 6 秒；支持多行脚本）"
     }
 
     private var commandPlaceholder: String {
         display == .heatmap
-            ? "如：curl -sfo /dev/null -w '%{time_total}' --max-time 5 http://boom-fn:5666/"
-            : "如：ipconfig getifaddr en0"
+            ? "如：curl -sfo /dev/null -w '%{time_total}' --max-time 5 http://boom-fn:5666/\n\n也支持多行脚本：\nfor i in 1 2 3; do\n  echo $i\ndone"
+            : "如：ipconfig getifaddr en0\n\n也支持多行脚本（整串交给 zsh 执行）"
     }
 }
 

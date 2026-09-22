@@ -294,6 +294,29 @@ final class SettingsAndLifecycleTests: XCTestCase {
         XCTAssertEqual(module.samples[item.id], [.value(9)])
     }
 
+    @MainActor
+    func testHeatmapRunsMultiLineScript() {
+        let settings = SettingsStore(defaults: defaults)
+        // 多行脚本：编辑器支持粘贴多行命令，整串交给 zsh -lc 执行
+        let script = """
+        for i in 1 2 3; do
+          echo $i
+        done
+        """
+        let item = CustomItem(name: "lines", command: script, display: .heatmap)
+        settings.customItems = [item]
+        let module = CustomItemsModule(settings: settings, pollInterval: 60)
+        module.start()
+        defer { module.stop() }
+        let done = expectation(description: "多行脚本执行完成并按行解析为多值")
+        var cancellables = Set<AnyCancellable>()
+        module.$samples.sink { samples in
+            if samples[item.id] == [.value(1), .value(2), .value(3)] { done.fulfill() }
+        }.store(in: &cancellables)
+        module.refresh()
+        wait(for: [done], timeout: 5)
+    }
+
     func testHeatmapValueFormattingMatchesMagnitude() {
         XCTAssertEqual(CustomHeatmapView.format(62), "62")
         XCTAssertEqual(CustomHeatmapView.format(0.023), "0.023")
