@@ -593,7 +593,7 @@ private struct CustomItemEditView: View {
         case .text:
             return "命令的执行结果原样显示在面板中。"
         case .heatmap:
-            return "命令输出一个或多个数字（空格 / 逗号 / 换行分隔），按数值大小着色成方格图；输出单个数字时随刷新累积为趋势。"
+            return "命令输出一个或多个数字（空格 / 逗号 / 换行分隔），按数值大小着色成方格图；单个数字会随刷新累积为趋势，且每 30 秒后台探测一次。命令非 0 退出或超时记为一次失败，显示为红色方格——适合探测网络地址。"
         }
     }
 
@@ -603,7 +603,7 @@ private struct CustomItemEditView: View {
 
     private var commandPlaceholder: String {
         display == .heatmap
-            ? "如：curl -s https://api.example.com/metrics | jq '.[].value'"
+            ? "如：curl -sfo /dev/null -w '%{time_total}' --max-time 5 http://boom-fn:5666/"
             : "如：ipconfig getifaddr en0"
     }
 }

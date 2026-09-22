@@ -91,10 +91,10 @@ struct CustomItemsView: View {
     }
 }
 
-/// 热力图：数值序列渲染为按行排列的着色方格（类 GitHub 贡献图），颜色越深数值越高。
-/// 多行布局从左到右、从上到下推进，最右下角为最新样本。
+/// 热力图：数值序列渲染为按行排列的着色方格（类 GitHub 贡献图），颜色越深数值越高；
+/// 失败样本（命令非 0 退出或超时）渲染为红色方格。多行布局从左到右、从上到下推进，最右下角为最新样本。
 struct CustomHeatmapView: View {
-    let values: [Double]
+    let values: [CustomItemsModule.CustomHeatmapSample]
     /// 悬停提示展示的命令原始输出
     var rawText: String?
 
@@ -105,19 +105,25 @@ struct CustomHeatmapView: View {
     private static let cellSpacing: CGFloat = 2
     /// 由浅到深的 5 档绿色；数值全部相等时取最深档
     static let levelOpacities: [Double] = [0.15, 0.32, 0.5, 0.7, 0.9]
+    /// 失败样本的红色
+    private static let failureColor = Color.red.opacity(0.85)
 
-    private var displayed: [Double] {
+    private var displayed: [CustomItemsModule.CustomHeatmapSample] {
         Array(values.suffix(Self.columns * Self.maxRows))
     }
 
-    private var rows: [[Double]] {
+    private var numericValues: [Double] {
+        displayed.compactMap(\.value)
+    }
+
+    private var rows: [[CustomItemsModule.CustomHeatmapSample]] {
         stride(from: 0, to: displayed.count, by: Self.columns).map {
             Array(displayed[$0..<min($0 + Self.columns, displayed.count)])
         }
     }
 
     private var range: (min: Double, max: Double)? {
-        guard let minimum = displayed.min(), let maximum = displayed.max() else { return nil }
+        guard let minimum = numericValues.min(), let maximum = numericValues.max() else { return nil }
         return (minimum, maximum)
     }
 
@@ -126,9 +132,9 @@ struct CustomHeatmapView: View {
             VStack(alignment: .leading, spacing: Self.cellSpacing) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     HStack(spacing: Self.cellSpacing) {
-                        ForEach(Array(row.enumerated()), id: \.offset) { _, value in
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, sample in
                             RoundedRectangle(cornerRadius: 2, style: .continuous)
-                                .fill(Color.green.opacity(Self.levelOpacities[level(for: value)]))
+                                .fill(color(for: sample))
                                 .frame(width: Self.cellSize, height: Self.cellSize)
                         }
                     }
@@ -152,15 +158,22 @@ struct CustomHeatmapView: View {
                     Text("高")
                         .font(.system(size: 8))
                         .foregroundStyle(.tertiary)
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(Self.failureColor)
+                        .frame(width: 7, height: 7)
+                    Text("失败")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.tertiary)
                 }
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: values)
     }
 
-    private func level(for value: Double) -> Int {
-        guard let range else { return Self.levelOpacities.count - 1 }
-        return Self.levelIndex(for: value, minimum: range.min, maximum: range.max)
+    private func color(for sample: CustomItemsModule.CustomHeatmapSample) -> Color {
+        guard let value = sample.value, let range else { return Self.failureColor }
+        return Color.green.opacity(
+            Self.levelOpacities[Self.levelIndex(for: value, minimum: range.min, maximum: range.max)])
     }
 
     /// 数值 → 色档：区间内线性分档，最小值取 0 档（最浅），最大值取最末档（最深）；
@@ -172,21 +185,34 @@ struct CustomHeatmapView: View {
     }
 
     private var summary: String {
-        guard let last = displayed.last, let range else { return "" }
-        return "最新 \(Self.format(last)) · 高 \(Self.format(range.max)) · 低 \(Self.format(range.min))"
+        var parts: [String] = []
+        if let last = displayed.last {
+            parts.append(last.value.map { "最新 \(Self.format($0))" } ?? "最新 失败")
+        }
+        if let range {
+            parts.append("高 \(Self.format(range.max))")
+            parts.append("低 \(Self.format(range.min))")
+        }
+        let failures = displayed.filter { $0.value == nil }.count
+        if failures > 0 { parts.append("失败 \(failures)") }
+        return parts.joined(separator: " · ")
     }
 
     private var helpText: String {
-        var lines = ["共 \(values.count) 个数值，颜色由浅到深表示由低到高，右下角为最新样本"]
+        var lines = ["共 \(values.count) 个样本，绿色由浅到深表示数值由低到高，红色为失败（命令非 0 退出或超时），右下角为最新样本"]
         if let rawText, !rawText.isEmpty {
             lines.append("原始输出：\(rawText.prefix(400))")
         }
         return lines.joined(separator: "\n")
     }
 
+    /// 按量级选择小数位，秒级时延（如 0.023）与百分比 / 计数都能读
     static func format(_ value: Double) -> String {
-        value == value.rounded() && abs(value) < 1e9
-            ? String(Int(value))
-            : String(format: "%.1f", value)
+        let magnitude = abs(value)
+        if value == value.rounded(), magnitude < 1e9 { return String(Int(value)) }
+        if magnitude >= 100 { return String(format: "%.0f", value) }
+        if magnitude >= 10 { return String(format: "%.1f", value) }
+        if magnitude >= 1 { return String(format: "%.2f", value) }
+        return String(format: "%.3f", value)
     }
 }

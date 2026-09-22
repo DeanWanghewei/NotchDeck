@@ -220,9 +220,11 @@ final class SettingsAndLifecycleTests: XCTestCase {
         let settings = SettingsStore(defaults: defaults)
         let item = CustomItem(name: "heat", command: "printf 5", display: .heatmap)
         settings.customItems = [item]
-        let module = CustomItemsModule(settings: settings)
+        let module = CustomItemsModule(settings: settings, pollInterval: 60)
         module.start()
         defer { module.stop() }
+
+        func sample(_ value: Double) -> CustomItemsModule.CustomHeatmapSample { .value(value) }
 
         let first = expectation(description: "首次执行产生一个样本")
         let second = expectation(description: "再次执行累积第二个样本")
@@ -231,22 +233,74 @@ final class SettingsAndLifecycleTests: XCTestCase {
         module.$samples.sink { samples in
             let values = samples[item.id] ?? []
             // 用序列内容而非元素个数判定，使命令重置后的单元素序列不会重复满足 first
-            if values == [5] { first.fulfill() }
-            if values == [5, 5] { second.fulfill() }
-            if values == [6] { reset.fulfill() }
+            if values == [sample(5)] { first.fulfill() }
+            if values == [sample(5), sample(5)] { second.fulfill() }
+            if values == [sample(6)] { reset.fulfill() }
         }.store(in: &cancellables)
 
         module.refresh()
         wait(for: [first], timeout: 5)
         module.refresh()
         wait(for: [second], timeout: 5)
-        XCTAssertEqual(module.samples[item.id], [5, 5])
+        XCTAssertEqual(module.samples[item.id], [sample(5), sample(5)])
 
         var replaced = item
         replaced.command = "printf 6"
         settings.customItems = [replaced]
         wait(for: [reset], timeout: 5)
-        XCTAssertEqual(module.samples[item.id], [6])
+        XCTAssertEqual(module.samples[item.id], [sample(6)])
+    }
+
+    @MainActor
+    func testHeatmapFailureRecordsRedSampleThenRecovers() {
+        let settings = SettingsStore(defaults: defaults)
+        let marker = NSTemporaryDirectory() + "notchdeck-recovery-" + UUID().uuidString
+        defer { try? FileManager.default.removeItem(atPath: marker) }
+        // 同一条命令首次失败（建标记文件）、再次执行成功：失败样本与成功样本在同一序列累积
+        let command = "if [ -f \"\(marker)\" ]; then printf 3; else touch \"\(marker)\"; exit 7; fi"
+        let item = CustomItem(name: "probe", command: command, display: .heatmap)
+        settings.customItems = [item]
+        let module = CustomItemsModule(settings: settings, pollInterval: 60)
+        module.start()
+        defer { module.stop() }
+        let failed = expectation(description: "非 0 退出记为失败样本")
+        let recovered = expectation(description: "恢复成功后继续累积")
+        var cancellables = Set<AnyCancellable>()
+        module.$samples.sink { samples in
+            if samples[item.id] == [.failure] { failed.fulfill() }
+            if samples[item.id] == [.failure, .value(3)] { recovered.fulfill() }
+        }.store(in: &cancellables)
+        module.refresh()
+        wait(for: [failed], timeout: 5)
+        module.refresh()
+        wait(for: [recovered], timeout: 5)
+    }
+
+    @MainActor
+    func testHeatmapItemsArePolledInBackgroundWithoutManualRefresh() {
+        let settings = SettingsStore(defaults: defaults)
+        let item = CustomItem(name: "probe", command: "printf 9", display: .heatmap)
+        settings.customItems = [item]
+        // 缩短轮询间隔验证后台采样；不手动 refresh，只靠定时器驱动
+        let module = CustomItemsModule(settings: settings, pollInterval: 0.3)
+        module.start()
+        defer { module.stop() }
+        let polled = expectation(description: "定时器完成首次采样")
+        var cancellables = Set<AnyCancellable>()
+        module.$samples.sink { samples in
+            if samples[item.id]?.isEmpty == false { polled.fulfill() }
+        }.store(in: &cancellables)
+        wait(for: [polled], timeout: 5)
+        XCTAssertEqual(module.samples[item.id], [.value(9)])
+    }
+
+    func testHeatmapValueFormattingMatchesMagnitude() {
+        XCTAssertEqual(CustomHeatmapView.format(62), "62")
+        XCTAssertEqual(CustomHeatmapView.format(0.023), "0.023")
+        XCTAssertEqual(CustomHeatmapView.format(45.3), "45.3")
+        XCTAssertEqual(CustomHeatmapView.format(1234.4), "1234")
+        XCTAssertEqual(CustomHeatmapView.format(1234.6), "1235")
+        XCTAssertEqual(CustomHeatmapView.format(-0.5), "-0.500")
     }
 
     @MainActor
