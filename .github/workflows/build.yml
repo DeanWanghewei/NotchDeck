@@ -23,9 +23,9 @@ jobs:
           xcodebuild -version
 
       # .xcodeproj 不入库（.gitignore 忽略 *.xcodeproj），由 project.yml 在 CI 现场生成
-      - name: 安装 xcodegen 并生成工程
+      - name: 安装工具并生成工程
         run: |
-          brew install xcodegen
+          brew install xcodegen create-dmg
           xcodegen generate
 
       - name: 运行测试
@@ -48,8 +48,8 @@ jobs:
           test -n "$VERSION" || { echo "未解析到版本号"; exit 1; }
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "NotchDeck-v${VERSION}-arm64.zip"
-          hdiutil create -volname NotchDeck -srcfolder "$APP" -ov -format UDZO \
-            "NotchDeck-v${VERSION}-arm64.dmg"
+          # 拖拽安装式 DMG：App + 应用程序替身（create-dmg 排版，失败时脚本内降级保底）
+          scripts/package-dmg.sh "$APP" "NotchDeck-v${VERSION}-arm64.dmg"
           ls -lh NotchDeck-v*
 
       - name: 上传构建产物
