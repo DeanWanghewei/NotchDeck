@@ -28,7 +28,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.notchdeck.app
         PRODUCT_NAME: NotchDeck
-        MARKETING_VERSION: "0.15.0"
+        MARKETING_VERSION: "0.16.0"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_LSUIElement: true
