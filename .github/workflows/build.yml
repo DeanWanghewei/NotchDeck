@@ -72,6 +72,8 @@ jobs:
           if [ "v${VERSION}" != "$TAG" ]; then
             echo "标签 $TAG 与 project.yml 版本 $VERSION 不一致"; exit 1
           fi
+          # 浅克隆可能只取到剥离的标签引用，显式拉取标签对象保证能读到注释
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
           ARGS=(--title "NotchDeck $TAG")
           NOTES=$(git tag -l --format='%(contents)' "$TAG")
           if [ -n "$NOTES" ]; then ARGS+=(--notes "$NOTES"); else ARGS+=(--generate-notes); fi
