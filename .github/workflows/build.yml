@@ -1,0 +1,55 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: 测试与构建（macOS arm64）
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 显示工具链
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      # .xcodeproj 不入库（.gitignore 忽略 *.xcodeproj），由 project.yml 在 CI 现场生成
+      - name: 安装 xcodegen 并生成工程
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: 运行测试
+        run: |
+          set -o pipefail
+          xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck test 2>&1 | grep -E "Test Suite|Test Case.*(passed|failed)|error:|TEST" | tail -60
+
+      - name: Release 构建
+        run: |
+          xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck \
+            -configuration Release -derivedDataPath build/ci -quiet
+
+      - name: 打包 app 与 dmg
+        id: package
+        run: |
+          APP="build/ci/Build/Products/Release/NotchDeck.app"
+          VERSION=$(defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "NotchDeck-v${VERSION}-arm64.zip"
+          hdiutil create -volname NotchDeck -srcfolder "$APP" -ov -format UDZO \
+            "NotchDeck-v${VERSION}-arm64.dmg"
+          ls -lh NotchDeck-v*
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: NotchDeck-v${{ steps.package.outputs.version }}-arm64
+          path: |
+            NotchDeck-v*-arm64.zip
+            NotchDeck-v*-arm64.dmg
+          if-no-files-found: error

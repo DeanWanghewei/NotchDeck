@@ -177,6 +177,97 @@ final class SettingsAndLifecycleTests: XCTestCase {
         XCTAssertFalse(module.isRunning)
         XCTAssertTrue(module.outputs.isEmpty)
     }
+
+    func testCustomItemLegacyDecodingFallsBackToText() throws {
+        // 旧版本持久化数据没有 display 字段，缺失时回退为文本展示而不是解码失败
+        let legacy = #"{"id":"abc","name":"IP","command":"echo 1"}"#
+        let item = try JSONDecoder().decode(CustomItem.self, from: Data(legacy.utf8))
+        XCTAssertEqual(item.display, .text)
+        XCTAssertEqual(item.name, "IP")
+        let restored = try JSONDecoder().decode(CustomItem.self, from: JSONEncoder().encode(item))
+        XCTAssertEqual(restored, item)
+        let heatmap = try JSONDecoder().decode(
+            CustomItem.self,
+            from: Data(#"{"id":"def","name":"热力","command":"seq 5","display":"heatmap"}"#.utf8))
+        XCTAssertEqual(heatmap.display, .heatmap)
+    }
+
+    func testNumbersParsesSeparatedTokensAndIgnoresOthers() {
+        XCTAssertEqual(CustomItemsModule.numbers(in: "12 0.5,7%\nabc -3;x", limit: 10), [12, 0.5, 7, -3])
+        XCTAssertEqual(CustomItemsModule.numbers(in: "no digits here", limit: 10), [])
+        XCTAssertEqual(CustomItemsModule.numbers(in: "", limit: 10), [])
+        let many = (1...20).map(String.init).joined(separator: "\n")
+        XCTAssertEqual(CustomItemsModule.numbers(in: many, limit: 5), [1, 2, 3, 4, 5])
+        XCTAssertEqual(CustomItemsModule.numbers(in: many, limit: 0), [])
+    }
+
+    func testHeatmapLevelDarkerForLargerValue() {
+        let levels = (0...100).map { CustomHeatmapView.levelIndex(for: Double($0), minimum: 0, maximum: 100) }
+        // 数值越大色档不降低；最小值最浅、最大值最深、中间单调不减
+        XCTAssertEqual(levels.first, 0)
+        XCTAssertEqual(levels.last, CustomHeatmapView.levelOpacities.count - 1)
+        XCTAssertEqual(levels, levels.sorted())
+        // 全部相等时取最深档；越界值被钳制
+        XCTAssertEqual(CustomHeatmapView.levelIndex(for: 5, minimum: 5, maximum: 5),
+                       CustomHeatmapView.levelOpacities.count - 1)
+        XCTAssertEqual(CustomHeatmapView.levelIndex(for: -3, minimum: 0, maximum: 100), 0)
+        XCTAssertEqual(CustomHeatmapView.levelIndex(for: 130, minimum: 0, maximum: 100),
+                       CustomHeatmapView.levelOpacities.count - 1)
+    }
+
+    @MainActor
+    func testHeatmapSingleValueAccumulatesAndResetsOnCommandChange() {
+        let settings = SettingsStore(defaults: defaults)
+        let item = CustomItem(name: "heat", command: "printf 5", display: .heatmap)
+        settings.customItems = [item]
+        let module = CustomItemsModule(settings: settings)
+        module.start()
+        defer { module.stop() }
+
+        let first = expectation(description: "首次执行产生一个样本")
+        let second = expectation(description: "再次执行累积第二个样本")
+        let reset = expectation(description: "命令变更后历史重新累积")
+        var cancellables = Set<AnyCancellable>()
+        module.$samples.sink { samples in
+            let values = samples[item.id] ?? []
+            // 用序列内容而非元素个数判定，使命令重置后的单元素序列不会重复满足 first
+            if values == [5] { first.fulfill() }
+            if values == [5, 5] { second.fulfill() }
+            if values == [6] { reset.fulfill() }
+        }.store(in: &cancellables)
+
+        module.refresh()
+        wait(for: [first], timeout: 5)
+        module.refresh()
+        wait(for: [second], timeout: 5)
+        XCTAssertEqual(module.samples[item.id], [5, 5])
+
+        var replaced = item
+        replaced.command = "printf 6"
+        settings.customItems = [replaced]
+        wait(for: [reset], timeout: 5)
+        XCTAssertEqual(module.samples[item.id], [6])
+    }
+
+    @MainActor
+    func testHeatmapSuccessWithoutNumbersIsMarkedUnparsed() {
+        let settings = SettingsStore(defaults: defaults)
+        let item = CustomItem(name: "heat", command: "printf ok", display: .heatmap)
+        settings.customItems = [item]
+        let module = CustomItemsModule(settings: settings)
+        module.start()
+        defer { module.stop() }
+        let done = expectation(description: "执行完成")
+        var cancellables = Set<AnyCancellable>()
+        module.$outputs.sink { outputs in
+            if outputs[item.id] != nil { done.fulfill() }
+        }.store(in: &cancellables)
+        module.refresh()
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(module.outputs[item.id], "ok")
+        XCTAssertTrue(module.unparsedHeatmapIDs.contains(item.id))
+        XCTAssertNil(module.samples[item.id])
+    }
 }
 
 private final class LifecycleModule: ObservableObject, NotchModule {

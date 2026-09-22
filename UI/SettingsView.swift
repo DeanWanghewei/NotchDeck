@@ -491,8 +491,19 @@ private struct CustomItemRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.name)
-                    .font(.callout)
+                HStack(spacing: 6) {
+                    Text(item.name)
+                        .font(.callout)
+                    if item.display == .heatmap {
+                        Text("热力图")
+                            .font(.system(size: 9, weight: .medium))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.green.opacity(0.15)))
+                            .foregroundStyle(.green)
+                            .help("命令输出的数字按大小着色显示")
+                    }
+                }
                 Text(item.command)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
@@ -520,6 +531,7 @@ private struct CustomItemEditView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @State private var name = ""
     @State private var command = ""
+    @State private var display: CustomItem.Display = .text
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -533,10 +545,25 @@ private struct CustomItemEditView: View {
                     .textFieldStyle(.roundedBorder)
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("命令（zsh 执行，超时 6 秒）")
+                Text("展示方式")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextField("如：ipconfig getifaddr en0", text: $command, axis: .vertical)
+                Picker("展示方式", selection: $display) {
+                    Text("文本").tag(CustomItem.Display.text)
+                    Text("热力图").tag(CustomItem.Display.heatmap)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                Text(displayHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(commandCaption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField(commandPlaceholder, text: $command, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(2...4)
                     .font(.system(size: 12, design: .monospaced))
@@ -548,7 +575,8 @@ private struct CustomItemEditView: View {
                     let trimmedName = name.trimmingCharacters(in: .whitespaces)
                     let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmedName.isEmpty, !trimmedCommand.isEmpty else { return }
-                    settings.customItems.append(CustomItem(name: trimmedName, command: trimmedCommand))
+                    settings.customItems.append(
+                        CustomItem(name: trimmedName, command: trimmedCommand, display: display))
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -557,7 +585,26 @@ private struct CustomItemEditView: View {
             }
         }
         .padding(20)
-        .frame(width: 380, height: 240)
+        .frame(width: 380, height: 300)
+    }
+
+    private var displayHint: String {
+        switch display {
+        case .text:
+            return "命令的执行结果原样显示在面板中。"
+        case .heatmap:
+            return "命令输出一个或多个数字（空格 / 逗号 / 换行分隔），按数值大小着色成方格图；输出单个数字时随刷新累积为趋势。"
+        }
+    }
+
+    private var commandCaption: String {
+        display == .heatmap ? "命令（zsh 执行，超时 6 秒，输出数字）" : "命令（zsh 执行，超时 6 秒）"
+    }
+
+    private var commandPlaceholder: String {
+        display == .heatmap
+            ? "如：curl -s https://api.example.com/metrics | jq '.[].value'"
+            : "如：ipconfig getifaddr en0"
     }
 }
 

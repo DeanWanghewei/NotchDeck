@@ -9,8 +9,15 @@ final class CustomItemsModule: ObservableObject, NotchModule {
     let systemImage = "curlybraces.square"
 
     @Published private(set) var outputs: [String: String] = [:]
+    /// 热力图子项的数值序列：命令一次输出多个数值时整体替换；只输出单个数值时按刷新累积为趋势
+    @Published private(set) var samples: [String: [Double]] = [:]
+    /// 执行成功但输出中未解析到数值的热力图子项
+    @Published private(set) var unparsedHeatmapIDs: Set<String> = []
     @Published private(set) var isRunning = false
     @Published private(set) var lastRefresh = Date.distantPast
+
+    /// 单值热力图最多保留的历史样本数（同时限制一次输出的解析数量）
+    static let sampleLimit = 90
 
     private let settings: SettingsStore
     private let queue = DispatchQueue(label: "com.notchdeck.custom", qos: .utility)
@@ -19,6 +26,8 @@ final class CustomItemsModule: ObservableObject, NotchModule {
     private var cancellation: Shell.Cancellation?
     private var generation = 0
     private var active = false
+    /// id → 生成当前历史序列的命令；命令变更后历史重新累积，避免混入旧数据
+    private var sampleCommands: [String: String] = [:]
 
     init(settings: SettingsStore = .shared) {
         self.settings = settings
@@ -57,6 +66,9 @@ final class CustomItemsModule: ObservableObject, NotchModule {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
         outputs = [:]
+        samples = [:]
+        sampleCommands = [:]
+        unparsedHeatmapIDs = []
     }
 
     func content() -> some View { CustomItemsView(module: self) }
@@ -69,7 +81,14 @@ final class CustomItemsModule: ObservableObject, NotchModule {
         let token = Shell.Cancellation()
         cancellation = token
         let items = settings.customItems
-        outputs = outputs.filter { id, _ in items.contains { $0.id == id } }
+        func stillPresent(_ id: String) -> Bool { items.contains { $0.id == id } }
+        outputs = outputs.filter { id, _ in stillPresent(id) }
+        // @Published 内容不变也会重新发布；过滤后无变化就不赋值，避免向订阅方重复推送同一序列
+        let keptSamples = samples.filter { id, _ in stillPresent(id) }
+        if keptSamples != samples { samples = keptSamples }
+        let keptUnparsed = unparsedHeatmapIDs.filter { stillPresent($0) }
+        if keptUnparsed != unparsedHeatmapIDs { unparsedHeatmapIDs = keptUnparsed }
+        sampleCommands = sampleCommands.filter { id, _ in stillPresent(id) }
         guard !items.isEmpty else {
             isRunning = false
             return
@@ -77,21 +96,58 @@ final class CustomItemsModule: ObservableObject, NotchModule {
         isRunning = true
         queue.async { [weak self] in
             var results: [String: String] = [:]
+            var parsed: [String: [Double]] = [:]
             for item in items {
                 guard !token.isCancelled else { break }
                 let result = Shell.execute("/bin/zsh", arguments: ["-lc", item.command],
                                            timeout: 6, cancellation: token)
                 results[item.id] = Self.display(result)
+                if item.display == .heatmap, case .exited(0) = result.completion {
+                    parsed[item.id] = Self.numbers(in: result.output, limit: Self.sampleLimit)
+                }
             }
             DispatchQueue.main.async {
                 guard let self, self.active, self.generation == currentGeneration,
                       self.settings.customItems == items else { return }
                 self.outputs = results
+                self.unparsedHeatmapIDs = Set(parsed.filter { $0.value.isEmpty }.keys)
+                var merged = parsed.filter { !$0.value.isEmpty }
+                for (id, values) in parsed where values.count == 1 {
+                    // 单值输出按刷新累积为趋势；命令变更后从新序列重新开始
+                    let command = items.first { $0.id == id }?.command ?? ""
+                    var history = self.sampleCommands[id] == command ? (self.samples[id] ?? []) : []
+                    history.append(values[0])
+                    if history.count > Self.sampleLimit {
+                        history.removeFirst(history.count - Self.sampleLimit)
+                    }
+                    self.sampleCommands[id] = command
+                    merged[id] = history
+                }
+                self.samples = merged
                 self.isRunning = false
                 self.cancellation = nil
                 self.lastRefresh = Date()
             }
         }
+    }
+
+    /// 从命令输出提取数值：token 以空白 / 逗号 / 分号分隔，支持 "42"、"3.14"、"45%" 等写法，
+    /// 无法解析的 token 忽略；适配 `curl … | jq '.[]'` 之类脚本的纯数字输出。
+    /// 分隔符必须用独立的单字符字面量：同一字面量里 "\r\n" 相邻会合并为一个字素簇字符，
+    /// 导致集合里没有单独的换行 / 回车，按行输出的数字就切不开了。
+    private static let separators: Set<Character> = [" ", "\t", "\n", "\r", ",", ";"]
+
+    static func numbers(in output: String, limit: Int) -> [Double] {
+        guard limit > 0 else { return [] }
+        var values: [Double] = []
+        for token in output.split(whereSeparator: { separators.contains($0) }) {
+            var text = Substring(token)
+            if text.hasSuffix("%") { text = text.dropLast() }
+            guard let value = Double(text), value.isFinite else { continue }
+            values.append(value)
+            if values.count >= limit { break }
+        }
+        return values
     }
 
     static func display(_ result: Shell.Result) -> String {

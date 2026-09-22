@@ -87,9 +87,31 @@ final class ModuleRegistry: ObservableObject {
 
 /// 用户自定义的命令小部件：执行 shell 命令并展示输出
 struct CustomItem: Codable, Identifiable, Equatable {
+    /// 展示方式：text = 原样显示输出；heatmap = 输出解析为数值序列后按大小着色
+    enum Display: String, Codable, Equatable {
+        case text
+        case heatmap
+    }
+
     var id = UUID().uuidString
     var name = ""
     var command = ""
+    var display: Display = .text
+}
+
+/// 旧版本持久化数据没有 display 字段，缺失或损坏时回退默认值而不是整体丢弃
+extension CustomItem {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, command, display
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        command = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
+        display = try container.decodeIfPresent(Display.self, forKey: .display) ?? .text
+    }
 }
 
 /// 用户添加到面板的第三方 App
