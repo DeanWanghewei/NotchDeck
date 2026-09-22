@@ -54,7 +54,9 @@ struct SettingsView: View {
                 switch selectedTab {
                 case .modules: moduleSections
                 case .process: processSection
-                case .custom: customSection
+                case .custom:
+                    customSection
+                    presetSection
                 case .general: generalSections
                 case .about: aboutSections
                 }
@@ -262,7 +264,7 @@ struct SettingsView: View {
     private var customSection: some View {
         Section("自定义子项") {
             if settings.customItems.isEmpty {
-                Text("添加 shell 命令小部件，执行结果直接显示在面板中。")
+                Text("添加 shell 命令小部件：文本显示执行结果，或热力图按数字大小着色。可从下方示例模板一键添加。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -273,6 +275,40 @@ struct SettingsView: View {
             Button("添加子项…") {
                 activeSheet = .addItem
             }
+        }
+    }
+
+    /// 示例模板：命令写法的内置引导，点击「添加」即创建子项
+    private var presetSection: some View {
+        Section {
+            ForEach(CustomItemPresets.all) { preset in
+                HStack(alignment: .center, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(preset.name)
+                                .font(.callout)
+                            DisplayStyleBadge(display: preset.display)
+                        }
+                        Text(preset.command)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(preset.note)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    Button("添加") {
+                        settings.customItems.append(preset.item)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        } header: {
+            Text("示例模板")
+        } footer: {
+            Text("热力图：命令输出数字（空格 / 逗号 / 换行分隔）按大小着色；退出码非 0 或超时显示为红色；每 30 秒后台探测。完整写法见仓库 docs/custom-items.md")
         }
     }
 
@@ -482,6 +518,24 @@ private struct ModuleConfigRow: View {
     }
 }
 
+// MARK: - 展示方式徽章
+
+/// 子项 / 模板行的展示方式标记：热力图 = 绿色，文本 = 灰色
+private struct DisplayStyleBadge: View {
+    let display: CustomItem.Display
+
+    var body: some View {
+        let heatmap = display == .heatmap
+        Text(heatmap ? "热力图" : "文本")
+            .font(.system(size: 9, weight: .medium))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(Capsule().fill((heatmap ? Color.green : Color.secondary).opacity(0.15)))
+            .foregroundStyle(heatmap ? .green : .secondary)
+            .help(heatmap ? "命令输出的数字按大小着色显示" : "命令输出原样显示")
+    }
+}
+
 // MARK: - 自定义子项行
 
 private struct CustomItemRow: View {
@@ -494,15 +548,7 @@ private struct CustomItemRow: View {
                 HStack(spacing: 6) {
                     Text(item.name)
                         .font(.callout)
-                    if item.display == .heatmap {
-                        Text("热力图")
-                            .font(.system(size: 9, weight: .medium))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.green.opacity(0.15)))
-                            .foregroundStyle(.green)
-                            .help("命令输出的数字按大小着色显示")
-                    }
+                    DisplayStyleBadge(display: item.display)
                 }
                 Text(item.command)
                     .font(.system(size: 11, design: .monospaced))
