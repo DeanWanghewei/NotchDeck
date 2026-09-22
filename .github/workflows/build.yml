@@ -38,7 +38,10 @@ jobs:
         id: package
         run: |
           APP="build/ci/Build/Products/Release/NotchDeck.app"
-          VERSION=$(defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString)
+          test -d "$APP" || { echo "未找到 $APP"; ls -R build/ci/Build/Products | head -20; exit 1; }
+          # 版本号以 project.yml 为源头，避免依赖生成的 Info.plist 键
+          VERSION=$(sed -n 's/.*MARKETING_VERSION: "\(.*\)".*/\1/p' project.yml | head -1)
+          test -n "$VERSION" || { echo "未解析到版本号"; exit 1; }
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "NotchDeck-v${VERSION}-arm64.zip"
           hdiutil create -volname NotchDeck -srcfolder "$APP" -ov -format UDZO \
