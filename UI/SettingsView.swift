@@ -275,6 +275,12 @@ struct SettingsView: View {
             Button("添加子项…") {
                 activeSheet = .addItem
             }
+            Picker("热力图保留时长", selection: $settings.heatmapRetentionHours) {
+                ForEach([1.0, 2.0, 4.0, 8.0, 12.0, 24.0], id: \.self) { hours in
+                    Text("\(Int(hours)) 小时").tag(hours)
+                }
+            }
+            .help("热力图子项只保留最近该时长的探测样本（每 30 秒一次），更早的自动清除；面板中单行显示，样本过多时相邻样本自动合并")
         }
     }
 

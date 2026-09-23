@@ -91,35 +91,48 @@ struct CustomItemsView: View {
     }
 }
 
-/// 热力图：数值序列渲染为按行排列的着色方格（类 GitHub 贡献图），颜色越深数值越高；
-/// 失败样本（命令非 0 退出或超时）渲染为红色方格。多行布局从左到右、从上到下推进，最右下角为最新样本。
+/// 热力图：数值序列渲染为**单行**着色方格（类 GitHub 贡献图的一行），颜色越深数值越高，
+/// 右端为最新样本；失败样本（命令非 0 退出或超时）渲染为红色方格。
+/// 样本多到一行放不下时按顺序合并相邻样本（每格取该段最后一个样本），仍保持单行。
 struct CustomHeatmapView: View {
     let values: [CustomItemsModule.CustomHeatmapSample]
     /// 悬停提示展示的命令原始输出
     var rawText: String?
 
-    /// 每行方格数与最大行数：30 列 × 3 行以内可完整放进面板内容区
-    private static let columns = 30
-    private static let maxRows = 3
-    private static let cellSize: CGFloat = 10
+    private static let maxCellSize: CGFloat = 10
+    private static let minCellSize: CGFloat = 3
     private static let cellSpacing: CGFloat = 2
     /// 由浅到深的 5 档绿色；数值全部相等时取最深档
     static let levelOpacities: [Double] = [0.15, 0.32, 0.5, 0.7, 0.9]
     /// 失败样本的红色
     private static let failureColor = Color.red.opacity(0.85)
 
-    private var displayed: [CustomItemsModule.CustomHeatmapSample] {
-        Array(values.suffix(Self.columns * Self.maxRows))
+    /// 单行可容纳的样本数：按最小格子尺寸估算
+    static func capacity(width: CGFloat) -> Int {
+        max(16, Int(width / (minCellSize + cellSpacing)))
     }
+
+    /// 样本数超过容量时合并相邻样本：每格取该段最后一个样本（保留"最新状态"语义，失败同样可见）
+    static func slots(from samples: [CustomItemsModule.CustomHeatmapSample],
+                      capacity: Int) -> [CustomItemsModule.CustomHeatmapSample] {
+        guard capacity > 0, samples.count > capacity else { return samples }
+        let group = Int(ceil(Double(samples.count) / Double(capacity)))
+        return stride(from: 0, to: samples.count, by: group).map { start in
+            samples[min(start + group, samples.count) - 1]
+        }
+    }
+
+    /// 格子尺寸：样本少时最大 10pt，样本多时按行宽均分（不小于 3pt）
+    static func cellSize(count: Int, width: CGFloat) -> CGFloat {
+        guard count > 1 else { return maxCellSize }
+        return min(maxCellSize, max(minCellSize,
+                                     (width - CGFloat(count - 1) * cellSpacing) / CGFloat(count)))
+    }
+
+    private var displayed: [CustomItemsModule.CustomHeatmapSample] { values }
 
     private var numericValues: [Double] {
         displayed.compactMap(\.value)
-    }
-
-    private var rows: [[CustomItemsModule.CustomHeatmapSample]] {
-        stride(from: 0, to: displayed.count, by: Self.columns).map {
-            Array(displayed[$0..<min($0 + Self.columns, displayed.count)])
-        }
     }
 
     private var range: (min: Double, max: Double)? {
@@ -129,17 +142,19 @@ struct CustomHeatmapView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            VStack(alignment: .leading, spacing: Self.cellSpacing) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    HStack(spacing: Self.cellSpacing) {
-                        ForEach(Array(row.enumerated()), id: \.offset) { _, sample in
-                            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                                .fill(color(for: sample))
-                                .frame(width: Self.cellSize, height: Self.cellSize)
-                        }
+            GeometryReader { proxy in
+                let slots = Self.slots(from: displayed, capacity: Self.capacity(width: proxy.size.width))
+                let size = Self.cellSize(count: slots.count, width: proxy.size.width)
+                HStack(alignment: .top, spacing: Self.cellSpacing) {
+                    ForEach(Array(slots.enumerated()), id: \.offset) { _, sample in
+                        RoundedRectangle(cornerRadius: min(2, size * 0.4), style: .continuous)
+                            .fill(color(for: sample))
+                            .frame(width: size, height: size)
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+            .frame(height: Self.maxCellSize)
             .help(helpText)
             HStack(spacing: 8) {
                 Text(summary)
@@ -199,7 +214,8 @@ struct CustomHeatmapView: View {
     }
 
     private var helpText: String {
-        var lines = ["共 \(values.count) 个样本，绿色由浅到深表示数值由低到高，红色为失败（命令非 0 退出或超时），右下角为最新样本"]
+        var lines = ["单行时间线，绿色由浅到深表示数值由低到高，右端为最新样本；红色为失败（命令非 0 退出或超时）",
+                     "样本多到一行放不下时相邻样本自动合并为一格（取该段最新状态）"]
         if let rawText, !rawText.isEmpty {
             lines.append("原始输出：\(rawText.prefix(400))")
         }

@@ -4,11 +4,18 @@ import SwiftUI
 
 /// 自定义命令的结果只发布给对应配置；更新配置会取消旧批次并重新执行。
 final class CustomItemsModule: ObservableObject, NotchModule {
-    /// 热力图样本：value 为 nil 表示一次失败（命令非 0 退出或超时），渲染为红色方格
+    /// 热力图样本：value 为 nil 表示一次失败（命令非 0 退出或超时），渲染为红色方格；
+    /// date 用于按保留时长（settings.heatmapRetentionHours）裁剪旧样本
     struct CustomHeatmapSample: Equatable {
         let value: Double?
-        static let failure = CustomHeatmapSample(value: nil)
-        static func value(_ value: Double) -> CustomHeatmapSample { CustomHeatmapSample(value: value) }
+        let date: Date
+
+        static func failure(_ date: Date = Date()) -> CustomHeatmapSample {
+            CustomHeatmapSample(value: nil, date: date)
+        }
+        static func value(_ value: Double, _ date: Date = Date()) -> CustomHeatmapSample {
+            CustomHeatmapSample(value: value, date: date)
+        }
     }
 
     let id = "custom"
@@ -23,8 +30,10 @@ final class CustomItemsModule: ObservableObject, NotchModule {
     @Published private(set) var isRunning = false
     @Published private(set) var lastRefresh = Date.distantPast
 
-    /// 单值热力图最多保留的历史样本数（同时限制一次输出的解析数量）
-    static let sampleLimit = 90
+    /// 一次命令输出最多解析的数值个数（多值模式的解析上限）
+    static let parseLimit = 90
+    /// 单值历史的安全上限（24 小时 × 每 30 秒一采约 2880 个，正常由保留时长裁剪，这里兜底）
+    static let maxSampleCount = 3000
     /// 有热力图子项时的后台探测间隔；文本子项不轮询，仅面板展开时执行
     static let defaultPollInterval: TimeInterval = 30
 
@@ -61,6 +70,12 @@ final class CustomItemsModule: ObservableObject, NotchModule {
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.refresh() }
+            .store(in: &cancellables)
+        // 保留时长调整后立即裁剪已有样本，不必等下一轮命令执行
+        settings.$heatmapRetentionHours
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.trimSamples() }
             .store(in: &cancellables)
         observer = NotificationCenter.default.addObserver(
             forName: AppModel.panelDidExpand, object: nil, queue: .main) { [weak self] _ in
@@ -129,7 +144,7 @@ final class CustomItemsModule: ObservableObject, NotchModule {
                 guard item.display == .heatmap else { continue }
                 switch result.completion {
                 case .exited(0):
-                    parsed[item.id] = Self.numbers(in: result.output, limit: Self.sampleLimit)
+                    parsed[item.id] = Self.numbers(in: result.output, limit: Self.parseLimit)
                 case .cancelled:
                     break
                 default:
@@ -140,29 +155,43 @@ final class CustomItemsModule: ObservableObject, NotchModule {
             DispatchQueue.main.async {
                 guard let self, self.active, self.generation == currentGeneration,
                       self.settings.customItems == items else { return }
+                let now = Date()
                 self.outputs = results
                 self.unparsedHeatmapIDs = Set(parsed.filter { $0.value.isEmpty }.keys)
                 var merged: [String: [CustomHeatmapSample]] = [:]
                 for (id, values) in parsed where !values.isEmpty {
                     if values.count == 1 {
                         merged[id] = self.accumulated(id: id, command: self.command(of: id, in: items),
-                                                      sample: .value(values[0]))
+                                                      sample: .value(values[0], now))
                     } else {
-                        merged[id] = values.map(CustomHeatmapSample.value)
+                        merged[id] = values.map { CustomHeatmapSample.value($0, now) }
                         // 整体替换的序列不带历史语义，清掉累积锚点
                         self.sampleCommands[id] = nil
                     }
                 }
                 for id in failed {
                     merged[id] = self.accumulated(id: id, command: self.command(of: id, in: items),
-                                                  sample: .failure)
+                                                  sample: .failure(now))
                 }
-                self.samples = merged
+                // 只保留保留时长窗口内的样本
+                let cutoff = now.addingTimeInterval(-self.settings.heatmapRetentionHours * 3600)
+                self.samples = merged.mapValues { Self.trimmed($0, before: cutoff) }
                 self.isRunning = false
                 self.cancellation = nil
                 self.lastRefresh = Date()
             }
         }
+    }
+
+    /// 丢弃早于 cutoff 的样本（保留时长窗口裁剪）
+    static func trimmed(_ history: [CustomHeatmapSample], before cutoff: Date) -> [CustomHeatmapSample] {
+        history.filter { $0.date >= cutoff }
+    }
+
+    private func trimSamples() {
+        let cutoff = Date().addingTimeInterval(-settings.heatmapRetentionHours * 3600)
+        let trimmed = samples.mapValues { Self.trimmed($0, before: cutoff) }
+        if trimmed != samples { samples = trimmed }
     }
 
     private func command(of id: String, in items: [CustomItem]) -> String {
@@ -174,8 +203,8 @@ final class CustomItemsModule: ObservableObject, NotchModule {
                              sample: CustomHeatmapSample) -> [CustomHeatmapSample] {
         var history = sampleCommands[id] == command ? (samples[id] ?? []) : []
         history.append(sample)
-        if history.count > Self.sampleLimit {
-            history.removeFirst(history.count - Self.sampleLimit)
+        if history.count > Self.maxSampleCount {
+            history.removeFirst(history.count - Self.maxSampleCount)
         }
         sampleCommands[id] = command
         return history

@@ -50,6 +50,10 @@ final class SettingsStore: ObservableObject {
     @Published var customItems: [CustomItem] {
         didSet { persist(customItems, forKey: Keys.customItems) }
     }
+    /// 热力图单值序列的保留时长（小时），超出后旧样本自动清除；设置页提供 1~24 小时档位
+    @Published var heatmapRetentionHours: Double {
+        didSet { defaults.set(heatmapRetentionHours, forKey: Keys.heatmapRetentionHours) }
+    }
     /// 已启用的媒体源（bundleID）；默认为空 = 安装后不申请任何权限
     @Published var mediaSources: [String] {
         didSet { defaults.set(mediaSources, forKey: Keys.mediaSources) }
@@ -117,6 +121,7 @@ final class SettingsStore: ObservableObject {
         static let moduleConfigs = "settings.moduleConfigs"
         static let moduleOrder = "settings.moduleOrder"
         static let customItems = "settings.customItems"
+        static let heatmapRetentionHours = "settings.heatmapRetentionHours"
         static let mediaSources = "settings.mediaSources"
         static let panelApps = "settings.panelApps"
         static let processDisplay = "settings.processDisplay"
@@ -156,6 +161,8 @@ final class SettingsStore: ObservableObject {
         moduleConfigs = Self.decode([String: ModuleConfig].self, forKey: Keys.moduleConfigs, defaults: defaults) ?? [:]
         moduleOrder = defaults.stringArray(forKey: Keys.moduleOrder) ?? []
         customItems = Self.decode([CustomItem].self, forKey: Keys.customItems, defaults: defaults) ?? []
+        // 兼容历史/异常值：夹到 0.5~24 小时
+        heatmapRetentionHours = min(24, max(0.5, defaults.object(forKey: Keys.heatmapRetentionHours) as? Double ?? 2))
         mediaSources = defaults.stringArray(forKey: Keys.mediaSources) ?? []
         panelApps = Self.decode([PanelApp].self, forKey: Keys.panelApps, defaults: defaults) ?? []
         processDisplay = defaults.string(forKey: Keys.processDisplay) ?? "grid"

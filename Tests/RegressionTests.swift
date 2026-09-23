@@ -65,6 +65,11 @@ final class ShellTests: XCTestCase {
     }
 }
 
+/// 样本带时间戳后，测试统一比较值投影（[Double?]，nil = 失败）
+private func heatmapValues(_ samples: [CustomItemsModule.CustomHeatmapSample]?) -> [Double?] {
+    (samples ?? []).map(\.value)
+}
+
 final class SettingsAndLifecycleTests: XCTestCase {
     private var defaults: UserDefaults!
     private var suite: String!
@@ -224,31 +229,29 @@ final class SettingsAndLifecycleTests: XCTestCase {
         module.start()
         defer { module.stop() }
 
-        func sample(_ value: Double) -> CustomItemsModule.CustomHeatmapSample { .value(value) }
-
         let first = expectation(description: "首次执行产生一个样本")
         let second = expectation(description: "再次执行累积第二个样本")
         let reset = expectation(description: "命令变更后历史重新累积")
         var cancellables = Set<AnyCancellable>()
         module.$samples.sink { samples in
-            let values = samples[item.id] ?? []
+            let values = heatmapValues(samples[item.id])
             // 用序列内容而非元素个数判定，使命令重置后的单元素序列不会重复满足 first
-            if values == [sample(5)] { first.fulfill() }
-            if values == [sample(5), sample(5)] { second.fulfill() }
-            if values == [sample(6)] { reset.fulfill() }
+            if values == [5] { first.fulfill() }
+            if values == [5, 5] { second.fulfill() }
+            if values == [6] { reset.fulfill() }
         }.store(in: &cancellables)
 
         module.refresh()
         wait(for: [first], timeout: 5)
         module.refresh()
         wait(for: [second], timeout: 5)
-        XCTAssertEqual(module.samples[item.id], [sample(5), sample(5)])
+        XCTAssertEqual(heatmapValues(module.samples[item.id]), [5, 5])
 
         var replaced = item
         replaced.command = "printf 6"
         settings.customItems = [replaced]
         wait(for: [reset], timeout: 5)
-        XCTAssertEqual(module.samples[item.id], [sample(6)])
+        XCTAssertEqual(heatmapValues(module.samples[item.id]), [6])
     }
 
     @MainActor
@@ -267,8 +270,9 @@ final class SettingsAndLifecycleTests: XCTestCase {
         let recovered = expectation(description: "恢复成功后继续累积")
         var cancellables = Set<AnyCancellable>()
         module.$samples.sink { samples in
-            if samples[item.id] == [.failure] { failed.fulfill() }
-            if samples[item.id] == [.failure, .value(3)] { recovered.fulfill() }
+            let values = heatmapValues(samples[item.id])
+            if values == [nil] { failed.fulfill() }
+            if values == [nil, 3] { recovered.fulfill() }
         }.store(in: &cancellables)
         module.refresh()
         wait(for: [failed], timeout: 5)
@@ -288,10 +292,10 @@ final class SettingsAndLifecycleTests: XCTestCase {
         let polled = expectation(description: "定时器完成首次采样")
         var cancellables = Set<AnyCancellable>()
         module.$samples.sink { samples in
-            if samples[item.id]?.isEmpty == false { polled.fulfill() }
+            if heatmapValues(samples[item.id]).isEmpty == false { polled.fulfill() }
         }.store(in: &cancellables)
         wait(for: [polled], timeout: 5)
-        XCTAssertEqual(module.samples[item.id], [.value(9)])
+        XCTAssertEqual(heatmapValues(module.samples[item.id]), [9])
     }
 
     @MainActor
@@ -311,10 +315,41 @@ final class SettingsAndLifecycleTests: XCTestCase {
         let done = expectation(description: "多行脚本执行完成并按行解析为多值")
         var cancellables = Set<AnyCancellable>()
         module.$samples.sink { samples in
-            if samples[item.id] == [.value(1), .value(2), .value(3)] { done.fulfill() }
+            if heatmapValues(samples[item.id]) == [1, 2, 3] { done.fulfill() }
         }.store(in: &cancellables)
         module.refresh()
         wait(for: [done], timeout: 5)
+    }
+
+    func testHeatmapSlotsCompressLongHistoryIntoSingleRow() {
+        // 240 个样本超过单行容量时按相邻合并，仍保持一行且包含最新样本
+        let base = Date()
+        let history = (0..<240).map { CustomItemsModule.CustomHeatmapSample.value(Double($0), base) }
+        let slots = CustomHeatmapView.slots(from: history, capacity: 89)
+        XCTAssertLessThanOrEqual(slots.count, 89)
+        // 分组大小 ceil(240/89) = 3：第一格取第 3 个样本（下标 2），最后一格包含最新样本
+        XCTAssertEqual(slots.first?.value, 2)
+        XCTAssertEqual(slots.last?.value, 239)
+        // 失败样本在合并段末尾时保留红色语义
+        var withFailure = history
+        withFailure[239] = .failure(base)
+        let failureSlots = CustomHeatmapView.slots(from: withFailure, capacity: 89)
+        XCTAssertNil(failureSlots.last?.value)
+        // 未超容量时原样返回
+        XCTAssertEqual(CustomHeatmapView.slots(from: Array(history.prefix(80)), capacity: 89).count, 80)
+    }
+
+    func testHeatmapSamplesOlderThanRetentionWindowAreTrimmed() {
+        let now = Date()
+        let history = [
+            CustomItemsModule.CustomHeatmapSample.value(1, now.addingTimeInterval(-3 * 3600)),
+            CustomItemsModule.CustomHeatmapSample.value(2, now.addingTimeInterval(-1 * 3600)),
+            CustomItemsModule.CustomHeatmapSample.failure(now),
+        ]
+        let kept = CustomItemsModule.trimmed(history, before: now.addingTimeInterval(-2 * 3600))
+        XCTAssertEqual(kept.count, 2)
+        XCTAssertEqual(kept.first?.value, 2)
+        XCTAssertNil(kept.last?.value)
     }
 
     func testHeatmapValueFormattingMatchesMagnitude() {
