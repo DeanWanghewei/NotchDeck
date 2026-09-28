@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 系统监控：CPU / 内存 / 磁盘卡片 + CPU 热力图 + 交换内存 / 电池 + 网络速率
+/// 系统监控：CPU / 内存 / 磁盘卡片 + CPU 热力图 + 交换内存 / 电池（含时间估算）/ 热压力警示 + 网络速率
 struct SystemMonitorView: View {
     @ObservedObject var monitor: SystemMonitor
     @ObservedObject private var settings = SettingsStore.shared
@@ -8,12 +8,16 @@ struct SystemMonitorView: View {
     var body: some View {
         let stats = monitor.stats
         VStack(spacing: 10) {
+            if settings.showThermalPressure, ThermalPressure.needsWarning(stats.thermalState) {
+                thermalWarningRow(stats.thermalState)
+            }
+
             HStack(spacing: 10) {
                 StatCard(label: "CPU",
                          value: ByteFormat.percent(stats.cpuUsage),
                          progress: stats.cpuUsage,
                          systemImage: "cpu")
-                    .help("CPU 使用率 \(ByteFormat.percent(stats.cpuUsage))")
+                    .help("CPU 使用率 \(ByteFormat.percent(stats.cpuUsage))\n热压力：\(ThermalPressure.label(stats.thermalState))")
                 StatCard(label: "内存",
                          value: ByteFormat.bytes(stats.memoryUsed),
                          progress: memoryProgress,
@@ -52,19 +56,8 @@ struct SystemMonitorView: View {
                             .help("交换内存（压缩后的 swap）：已用 / 总量")
                     }
                     if settings.showBattery, let battery = stats.battery {
-                        HStack(spacing: 4) {
-                            Image(systemName: battery.isPlugged
-                                  ? (battery.isCharging ? "battery.100.bolt" : "battery.100")
-                                  : "battery.\(min(100, Int(battery.percent / 25) * 25))")
-                            Text("\(Int(battery.percent.rounded()))%")
-                            Text("· \(battery.currentmAh)/\(battery.maxmAh) mAh")
-                                .foregroundStyle(.tertiary)
-                            if battery.cycleCount > 0 {
-                                Text("· \(battery.cycleCount) 循环")
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                        .help(batteryHelp(battery))
+                        batteryInline(battery)
+                            .help(batteryHelp(battery))
                     }
                     Spacer()
                     Text("网络 \(ByteFormat.rate(stats.networkDownload)) ↓")
@@ -90,16 +83,100 @@ struct SystemMonitorView: View {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: settings.showCPUHeatmap)
+        .animation(.easeInOut(duration: 0.25), value: monitor.stats.thermalState)
+    }
+
+    /// 热压力警示行：仅非正常档显示（温度/风扇不可用时，这是系统过热降速的唯一公开信号）
+    private func thermalWarningRow(_ state: ProcessInfo.ThermalState) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: state == .critical ? "thermometer.high" : "thermometer.medium")
+            Text("热压力：\(ThermalPressure.label(state)) · 系统可能已降低性能")
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Spacer()
+        }
+        .font(.system(size: 10, weight: .medium))
+        .foregroundStyle(state == .critical ? AnyShapeStyle(Color.red) : AnyShapeStyle(Color.orange))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background((state == .critical ? Color.red : Color.orange).opacity(0.14),
+                    in: RoundedRectangle(cornerRadius: 7))
+        .help("系统热压力 \(ThermalPressure.label(state))（公开 API 仅提供档位，无具体温度）。持续高负载、高温环境或充电时可能触发，系统会降低 CPU/GPU 性能。")
+    }
+
+    /// 电池内联信息：空间不足时优先保留 时间估算 与 循环次数，容量降级省略
+    @ViewBuilder
+    private func batteryInline(_ battery: BatteryAndSwap.BatteryInfo) -> some View {
+        let timeDescription = BatteryAndSwap.timeDescription(
+            isCharging: battery.isCharging, isPlugged: battery.isPlugged,
+            timeToEmptyMinutes: battery.timeToEmptyMinutes, timeToFullMinutes: battery.timeToFullMinutes)
+        let cycles = battery.designCycleCount > 0
+            ? "\(battery.cycleCount)/\(battery.designCycleCount) 循环"
+            : (battery.cycleCount > 0 ? "\(battery.cycleCount) 循环" : "")
+        ViewThatFits(in: .horizontal) {
+            batteryParts(battery, time: timeDescription, cycles: cycles, capacity: true)
+            batteryParts(battery, time: timeDescription, cycles: cycles, capacity: false)
+        }
+    }
+
+    private func batteryParts(_ battery: BatteryAndSwap.BatteryInfo,
+                              time: String?, cycles: String, capacity: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: battery.isPlugged
+                  ? (battery.isCharging ? "battery.100.bolt" : "battery.100")
+                  : "battery.\(min(100, Int(battery.percent / 25) * 25))")
+            Text("\(Int(battery.percent.rounded()))%")
+            if capacity, battery.maxmAh > 0 {
+                Text("· \(battery.currentmAh)/\(battery.maxmAh) mAh")
+                    .foregroundStyle(.tertiary)
+            }
+            if let time {
+                Text("· \(time)")
+                    .foregroundStyle(.secondary)
+            } else if battery.isCharging {
+                Text("· 充满 估算中")
+                    .foregroundStyle(.tertiary)
+            } else if !battery.isPlugged {
+                Text("· 剩余 估算中")
+                    .foregroundStyle(.tertiary)
+            }
+            if !cycles.isEmpty {
+                Text("· \(cycles)")
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .lineLimit(1)
     }
 
     private func batteryHelp(_ battery: BatteryAndSwap.BatteryInfo) -> String {
-        var lines = ["电量 \(Int(battery.percent.rounded()))%（\(battery.isCharging ? "充电中" : battery.isPlugged ? "已接电源" : "使用电池")）",
-                     "当前容量 \(battery.currentmAh) / 满充容量 \(battery.maxmAh) mAh"]
+        var lines = ["电量 \(Int(battery.percent.rounded()))%（\(battery.isCharging ? "充电中" : battery.isPlugged ? "已接电源" : "使用电池")）"]
+        if battery.maxmAh > 0 {
+            lines.append("当前容量 \(battery.currentmAh) / 满充容量 \(battery.maxmAh) mAh")
+        }
+        if let time = BatteryAndSwap.timeDescription(
+            isCharging: battery.isCharging, isPlugged: battery.isPlugged,
+            timeToEmptyMinutes: battery.timeToEmptyMinutes, timeToFullMinutes: battery.timeToFullMinutes) {
+            lines.append("预计 \(time)")
+        }
         if battery.designmAh > 0 {
             lines.append("设计容量 \(battery.designmAh) mAh，健康度 \(Int(Double(battery.maxmAh) / Double(battery.designmAh) * 100))%")
         }
         if battery.cycleCount > 0 {
-            lines.append("循环次数 \(battery.cycleCount)")
+            if let fraction = BatteryAndSwap.cycleFraction(count: battery.cycleCount, design: battery.designCycleCount) {
+                lines.append("循环次数 \(battery.cycleCount) / 设计上限 \(battery.designCycleCount)（已用 \(String(format: "%.1f%%", fraction * 100))）")
+            } else {
+                lines.append("循环次数 \(battery.cycleCount)")
+            }
+        }
+        if battery.voltageMV > 0 || battery.amperageMA != 0 {
+            var electrical = "电压 \(String(format: "%.2f", Double(battery.voltageMV) / 1000)) V"
+            if battery.amperageMA != 0 {
+                electrical += " · 电流 \(battery.amperageMA > 0 ? "" : "-")\(abs(battery.amperageMA)) mA"
+                if let watts = BatteryAndSwap.watts(voltageMV: battery.voltageMV, amperageMA: battery.amperageMA) {
+                    electrical += " · 功率 \(String(format: "%.1f", watts)) W（\(battery.isCharging ? "充入" : "输出")）"
+                }
+            }
+            lines.append(electrical)
         }
         return lines.joined(separator: "\n")
     }

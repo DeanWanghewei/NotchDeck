@@ -517,6 +517,78 @@ final class MediaAndMonitoringTests: XCTestCase {
         XCTAssertEqual(CPUSample.usage(previous: [1, 2, 3, 4], current: [1, 2, 3, 4]), 0)
     }
 
+    // MARK: 电池增强（iStats 对齐）：时间估算 / 设计循环上限 / 电压电流
+
+    func testBatteryTimeFormattingMatchesIStatsStyle() {
+        XCTAssertEqual(BatteryAndSwap.formatTime(minutes: 204), "3:24")
+        XCTAssertEqual(BatteryAndSwap.formatTime(minutes: 65), "1:05")
+        XCTAssertEqual(BatteryAndSwap.formatTime(minutes: 1), "0:01")
+        XCTAssertEqual(BatteryAndSwap.formatTime(minutes: 0), nil)
+        XCTAssertEqual(BatteryAndSwap.formatTime(minutes: -5), nil)
+        XCTAssertEqual(BatteryAndSwap.formatTime(minutes: 99 * 60 + 59), "99:59")
+        XCTAssertEqual(BatteryAndSwap.formatTime(minutes: 99 * 60 + 60), "99+ 小时")
+    }
+
+    func testBatteryTimeDescriptionCoversDischargeChargeAndPluggedStates() {
+        // 放电且有估算
+        XCTAssertEqual(BatteryAndSwap.timeDescription(isCharging: false, isPlugged: false,
+                                                     timeToEmptyMinutes: 204, timeToFullMinutes: 0),
+                       "剩余 3:24")
+        // 充电且有充满估算
+        XCTAssertEqual(BatteryAndSwap.timeDescription(isCharging: true, isPlugged: true,
+                                                     timeToEmptyMinutes: 0, timeToFullMinutes: 72),
+                       "1:12 充满")
+        // 用电池但尚未估出 / 接电源未充电 / 充电早期未估出 → 无描述（由"估算中"兜底）
+        XCTAssertNil(BatteryAndSwap.timeDescription(isCharging: false, isPlugged: false,
+                                                    timeToEmptyMinutes: 0, timeToFullMinutes: 0))
+        XCTAssertNil(BatteryAndSwap.timeDescription(isCharging: false, isPlugged: true,
+                                                    timeToEmptyMinutes: 0, timeToFullMinutes: 0))
+        XCTAssertNil(BatteryAndSwap.timeDescription(isCharging: true, isPlugged: true,
+                                                    timeToEmptyMinutes: 0, timeToFullMinutes: 0))
+    }
+
+    func testCycleFractionUsesDesignLimitAndClamps() {
+        XCTAssertEqual(BatteryAndSwap.cycleFraction(count: 85, design: 1000) ?? -1, 0.085, accuracy: 1e-9)
+        XCTAssertNil(BatteryAndSwap.cycleFraction(count: 85, design: 0))
+        XCTAssertEqual(BatteryAndSwap.cycleFraction(count: 1200, design: 1000) ?? 0, 1)
+        XCTAssertEqual(BatteryAndSwap.cycleFraction(count: -3, design: 1000) ?? 1, 0)
+    }
+
+    func testBatteryWattsFromMillivoltsAndMilliamps() {
+        // 12460 mV × 1234 mA ≈ 15.38 W（取绝对值，放电为负电流）
+        XCTAssertEqual(BatteryAndSwap.watts(voltageMV: 12460, amperageMA: 1234) ?? 0, 15.38, accuracy: 0.01)
+        XCTAssertEqual(BatteryAndSwap.watts(voltageMV: 12460, amperageMA: -987) ?? 0, 12.30, accuracy: 0.01)
+        XCTAssertNil(BatteryAndSwap.watts(voltageMV: 0, amperageMA: 1234))
+        XCTAssertNil(BatteryAndSwap.watts(voltageMV: 12460, amperageMA: 0))
+    }
+
+    func testThermalPressureLabelsAndWarningGate() {
+        XCTAssertEqual(ThermalPressure.label(.nominal), "正常")
+        XCTAssertEqual(ThermalPressure.label(.fair), "适度")
+        XCTAssertEqual(ThermalPressure.label(.serious), "重度")
+        XCTAssertEqual(ThermalPressure.label(.critical), "严重")
+        XCTAssertFalse(ThermalPressure.needsWarning(.nominal))
+        XCTAssertTrue(ThermalPressure.needsWarning(.fair))
+        XCTAssertTrue(ThermalPressure.needsWarning(.critical))
+    }
+
+    @MainActor
+    func testNativeBatterySamplingFillsEnhancedFields() throws {
+        // 台式机 / 无电池设备跳过（battery 为 nil 不视为失败）
+        guard BatteryAndSwap.readBattery() != nil else { throw XCTSkip("本机无电池") }
+        let monitor = SystemMonitor()
+        let sampled = expectation(description: "Battery enhanced fields")
+        let subscription = monitor.$stats.dropFirst().first().sink { stats in
+            guard let battery = stats.battery else { return }
+            XCTAssertGreaterThan(battery.designCycleCount, 0, "设计循环上限应可读（注册表或 IOPS）")
+            sampled.fulfill()
+        }
+        monitor.start()
+        defer { monitor.stop() }
+        wait(for: [sampled], timeout: 3)
+        withExtendedLifetime(subscription) {}
+    }
+
     func testListenerFieldParserSupportsIPv6AndDeduplicatesSockets() {
         let result = NodeProcessScanner.parseListeners("p42\nn*:3000\nn[::1]:3000\nn127.0.0.1:8080\np43\nn*:3000\npbad\nn*:9000\np44\nn*:65536\n")
         XCTAssertEqual(result[42], [3000, 8080])

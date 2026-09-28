@@ -32,7 +32,7 @@
 - **快捷键**：录制新的全局快捷键。如果默认组合键被其他应用占用，可通过菜单栏打开设置后更换。
 - **面板**：开启“与刘海接壤（视觉一体）”切换为接壤样式；关闭则使用悬浮样式。无刘海屏自动使用悬浮样式。
 
-设置还提供**关于**页：项目简介、当前版本、开源地址（[github.com/DeanWanghewei/NotchDeck](https://github.com/DeanWanghewei/NotchDeck)）与开源协议（MIT；内置 MediaRemoteAdapter 为 BSD 3-Clause）。
+设置还提供**关于**页：项目简介、当前版本、开源地址（[github.com/DeanWanghewei/NotchDeck](https://github.com/DeanWanghewei/NotchDeck)）、开源协议（MIT；内置 MediaRemoteAdapter 为 BSD 3-Clause）与致谢信息。
 
 如果悬停没有反应，先确认应用正在运行、“悬停刘海自动展开”已开启，并把鼠标移到**刘海屏最上边缘**；也可以先用快捷键或菜单栏图标呼出面板。
 
@@ -52,7 +52,7 @@
 | 媒体 | 封面/标题/进度/播放控制。媒体源由用户在设置中添加（Music / Spotify），**添加哪个才请求哪个的授权**，未安装的源不会出现在列表中 |
 | 应用 | 用户从**已安装应用选择器**中挑选常用 App 添加到面板：一键启动/退出、运行状态，白名单应用带"已适配"标记（当前适配 Music、Spotify）。零权限（NSWorkspace 实现） |
 | 音量 | 系统音量滑杆 + 静音切换，无需权限 |
-| 系统监控 | CPU、内存、磁盘卡片 + **CPU 近 15 分钟热力图** + **交换内存（swap）** + **电池**（电量/充电状态/容量/健康度/循环次数）+ 网络速率，每秒刷新；各区块显示可在设置 → 监控 中开关。GPU 与风扇因当前 macOS 移除用户态统计接口（IOReport 框架已删、SMC 协议已变，均经探针实证）暂不可用，面板自动隐藏；实现零第三方依赖 |
+| 系统监控 | CPU、内存、磁盘卡片 + **CPU 近 15 分钟热力图** + **交换内存（swap）** + **电池**（电量/剩余时间与充满估算/容量/健康度/循环次数及设计上限/电压电流功率，悬停查看详情）+ **热压力警示**（系统过热降速时提示，温度的公开 API 等价物）+ 网络速率，每秒刷新；各区块显示可在设置 → 监控 中开关。GPU 与风扇因当前 macOS 移除用户态统计接口（IOReport 框架已删、SMC 协议已变，macOS 26 与 27.2 两轮探针实证）暂不可用，面板自动隐藏；实现零第三方依赖 |
 | 进程监控 | **零配置**列出当前用户所有监听 TCP 端口的进程（系统守护进程除外）：App 名/脚本名智能展示、PID/CPU/内存、一键 SIGTERM、退出自动移除 |
 | 自定义 | 用户添加 shell 命令小部件，两种展示方式：**文本**（输出原样显示）与**热力图**（输出数字按大小着色、单行时间线，命令失败/超时显示红色方格，每 30 秒后台探测，保留时长 1~24 小时可配置）。设置页内置**示例模板**一键添加（本机 IP、服务响应速度探测、磁盘占用、CPU 前几名、先登录再取数等），完整写法见 [docs/custom-items.md](docs/custom-items.md) |
 
@@ -94,9 +94,11 @@ protocol NotchModule: ObservableObject {
 
 展示层使用公开 API 按系统能力适配，保留 macOS 13 的最低运行版本。窗口、颈部轮廓和悬停热区统一使用目标屏幕的几何数据，兼容菜单栏高度变化、侧边 Dock、缩放与多屏坐标；接壤模式显式处理 HostingView 安全区，避免刘海 inset 被重复计算。悬浮模式在 macOS 26 及后续版本使用系统玻璃效果，接壤模式保持深色以融入硬件刘海。
 
-当前验证环境为 macOS 26.6.2（25G83）、Xcode 26.6 / macOS 26.5 SDK。**macOS 27 尚未实机验证**，不能据此宣称已全面兼容；升级后需复核浅色/深色、两种面板样式、全屏空间、外接屏切换及辅助功能外观。实验性系统正在播放仍按独立的媒体兼容状态显示，不将展示适配视为私有媒体接口已验证。
+当前验证环境为 macOS 26.6.2（25G83）、Xcode 26.6 / macOS 26.5 SDK；系统监控的电池/热压力增强与 49 项回归测试在 macOS 27.2（26B5091g）上通过。**macOS 27 尚未全面实机验证**，不能据此宣称已全面兼容；升级后需复核浅色/深色、两种面板样式、全屏空间、外接屏切换及辅助功能外观。实验性系统正在播放仍按独立的媒体兼容状态显示，不将展示适配视为私有媒体接口已验证。
 
-本次 Debug / Release 构建及 31 项回归测试通过（其中 10 项为屏幕布局测试）。应用启动与内容导出通过；`cacheDisplay` 不能可靠还原系统玻璃材质，且屏幕截图权限未开启，完整玻璃效果及辅助功能外观仍需人工复核。
+macOS 27 起 `AppleSmartBattery` 的 mAh 容量键（`AppleRawMaxCapacity` 等）从注册表顶层移入嵌套 `BatteryData` 字典（27.2 探针实证，旧读法会得到"无电池"），电池读取已做双层兼容；SMC 风扇/温度在 27.2 复证仍不可用（AppleSMC 结构方法返回 `kIOReturnUnsupported`），热压力档位（`ProcessInfo.thermalState`）作为温度的公开等价物提供。
+
+本次 Debug / Release 构建及 49 项回归测试通过（其中 10 项为屏幕布局测试）。应用启动与内容导出通过；`cacheDisplay` 不能可靠还原系统玻璃材质，且屏幕截图权限未开启，完整玻璃效果及辅助功能外观仍需人工复核。
 
 ## 构建与运行
 
@@ -135,7 +137,7 @@ NotchDeck/
 │   ├── Media/                     # 媒体：源注册表 + JXA / AppleScript（按需授权）
 │   ├── Apps/                      # 应用快捷控制 + 已安装应用扫描
 │   ├── Volume/                    # 音量：CoreAudio 默认输出设备
-│   ├── System/                    # 系统监控：Mach 统计 / sysctl 64 位网络计数
+│   ├── System/                    # 系统监控：Mach 统计 / sysctl 64 位网络计数 / IOPS 电池估算
 │   ├── Node/                      # Node 进程：lsof / ps / kill(SIGTERM)
 │   └── Custom/                    # 自定义命令小部件
 ├── UI/                            # SwiftUI 视图（面板 / 标签栏 / 各模块 / 设置）
@@ -160,6 +162,11 @@ xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck \
   -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
 ```
 
-`NotchDeckTests` 是无宿主逻辑测试，不启动 NotchDeck 主程序；设置写入临时 UserDefaults suite，媒体脚本使用模拟应用，不请求播放器授权。覆盖命令硬超时/取消/输出上限、模块生命周期、快捷键持久化、媒体元数据、系统采样与当前用户 TCP 监听扫描，以及刘海/无刘海、菜单栏自动隐藏、侧边 Dock、窄屏、负坐标多屏和悬停热区边界等布局场景。
+`NotchDeckTests` 是无宿主逻辑测试，不启动 NotchDeck 主程序；设置写入临时 UserDefaults suite，媒体脚本使用模拟应用，不请求播放器授权。覆盖命令硬超时/取消/输出上限、模块生命周期、快捷键持久化、媒体元数据、系统采样、电池时间估算/循环上限/电压电流格式化、热压力标签与当前用户 TCP 监听扫描，以及刘海/无刘海、菜单栏自动隐藏、侧边 Dock、窄屏、负坐标多屏和悬停热区边界等布局场景。
 
 自定义命令每条最多执行 6 秒，超时或取消时结束本次命令的进程组；标准输出和错误输出各保留最多 256 KiB，并区分成功无输出、非零退出码与超时。模块关闭后不再执行命令，变更配置会取消旧任务并丢弃过期结果。热力图子项每 30 秒后台探测一次；命令写法案例与规则见 [docs/custom-items.md](docs/custom-items.md)。
+
+## 致谢
+
+- [iStats](https://github.com/Chris911/iStats)（MIT License，© Christophe Naud-Dulude）：系统监控的电池时间估算、循环次数占设计上限、温度展示思路参考了该项目；SMC 风扇/温度探针基于其 `ext/osx_stats/smc.c` 的经典协议实现验证。
+- [MediaRemoteAdapter](https://github.com/ungive/mediaremote-adapter)（BSD 3-Clause License）：实验性「系统正在播放」的适配组件。

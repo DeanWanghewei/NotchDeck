@@ -14,12 +14,14 @@ struct SystemStats {
     var swapUsed: UInt64 = 0        // bytes
     var swapTotal: UInt64 = 0       // bytes
     var battery: BatteryAndSwap.BatteryInfo?
+    /// 系统热压力档位（温度的公开 API 等价物，SMC 温度键不可用）
+    var thermalState: ProcessInfo.ThermalState = .nominal
     /// 近 15 分钟 CPU 历史（每秒 1 个样本，最多 900 个）
     var cpuHistory: [Double] = []
 }
 
-/// CPU / 内存 / 磁盘 / 网络 / 交换内存 / 电池监控，每秒刷新
-/// （host_statistics + sysctl NET_RT_IFLIST2 + IOKit 电源注册表）
+/// CPU / 内存 / 磁盘 / 网络 / 交换内存 / 电池 / 热压力监控，每秒刷新
+/// （host_statistics + sysctl NET_RT_IFLIST2 + IOKit 电源注册表 + IOPS 电源源估算）
 final class SystemMonitor: ObservableObject {
     @Published private(set) var stats = SystemStats()
     /// GPU 使用率需要 IOReport 私有框架，macOS 15+ 已对用户态移除（探针实证），当前恒为不可用
@@ -85,6 +87,7 @@ private final class SystemSampler {
         value.swapUsed = swap.usedBytes
         value.swapTotal = swap.totalBytes
         value.battery = BatteryAndSwap.readBattery()
+        value.thermalState = ProcessInfo.processInfo.thermalState
         value.cpuHistory = Self.appendCpuHistory(value.cpuUsage, to: &cpuHistory)
         return value
     }
@@ -213,6 +216,24 @@ enum CPUSample {
         let total = deltas.reduce(0, +)
         guard total > 0 else { return 0 }
         return 1 - Double(deltas[2]) / Double(total)
+    }
+}
+
+/// 热压力档位展示（ProcessInfo.ThermalState → 中文标签与提示）
+enum ThermalPressure {
+    static func label(_ state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal: return "正常"
+        case .fair: return "适度"
+        case .serious: return "重度"
+        case .critical: return "严重"
+        @unknown default: return "未知"
+        }
+    }
+
+    /// 警示行是否需要显示（正常档不提示，避免常态噪音）
+    static func needsWarning(_ state: ProcessInfo.ThermalState) -> Bool {
+        state != .nominal
     }
 }
 

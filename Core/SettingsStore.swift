@@ -94,6 +94,10 @@ final class SettingsStore: ObservableObject {
     @Published var showBattery: Bool {
         didSet { defaults.set(showBattery, forKey: Keys.showBattery) }
     }
+    /// 系统监控：热压力警示（系统过热降速时在监控页提示）
+    @Published var showThermalPressure: Bool {
+        didSet { defaults.set(showThermalPressure, forKey: Keys.showThermalPressure) }
+    }
 
     private let defaults: UserDefaults
     private var updatingHotKey = false
@@ -130,6 +134,7 @@ final class SettingsStore: ObservableObject {
         static let showCPUHeatmap = "settings.showCPUHeatmap"
         static let showSwap = "settings.showSwap"
         static let showBattery = "settings.showBattery"
+        static let showThermalPressure = "settings.showThermalPressure"
         static let experimentalNowPlaying = "settings.experimentalNowPlaying"
         static let notchAttached = "settings.notchAttached"
     }
@@ -171,6 +176,7 @@ final class SettingsStore: ObservableObject {
         showCPUHeatmap = defaults.object(forKey: Keys.showCPUHeatmap) as? Bool ?? true
         showSwap = defaults.object(forKey: Keys.showSwap) as? Bool ?? true
         showBattery = defaults.object(forKey: Keys.showBattery) as? Bool ?? true
+        showThermalPressure = defaults.object(forKey: Keys.showThermalPressure) as? Bool ?? true
         experimentalNowPlaying = defaults.object(forKey: Keys.experimentalNowPlaying) as? Bool ?? false
         notchAttached = defaults.object(forKey: Keys.notchAttached) as? Bool ?? false
     }
