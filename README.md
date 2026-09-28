@@ -32,7 +32,7 @@
 - **快捷键**：录制新的全局快捷键。如果默认组合键被其他应用占用，可通过菜单栏打开设置后更换。
 - **面板**：开启“与刘海接壤（视觉一体）”切换为接壤样式；关闭则使用悬浮样式。无刘海屏自动使用悬浮样式。
 
-设置还提供**关于**页：项目简介、当前版本、开源地址（[github.com/DeanWanghewei/NotchDeck](https://github.com/DeanWanghewei/NotchDeck)）、开源协议（MIT；内置 MediaRemoteAdapter 为 BSD 3-Clause）与致谢信息。
+设置还提供**关于**页：项目简介、当前版本、开源地址（[github.com/DeanWanghewei/NotchDeck](https://github.com/DeanWanghewei/NotchDeck)）与开源协议（MIT；内置 MediaRemoteAdapter 为 BSD 3-Clause）。
 
 如果悬停没有反应，先确认应用正在运行、“悬停刘海自动展开”已开启，并把鼠标移到**刘海屏最上边缘**；也可以先用快捷键或菜单栏图标呼出面板。
 

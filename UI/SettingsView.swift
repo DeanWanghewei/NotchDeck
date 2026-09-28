@@ -418,13 +418,6 @@ struct SettingsView: View {
             Text("本项目以 MIT 协议开源，完整协议文本见仓库根目录的 LICENSE 文件。内置的实验性「系统正在播放」功能使用了第三方开源组件 MediaRemoteAdapter（BSD 3-Clause License，© Jonas van den Berg and contributors）。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            LabeledContent("致谢") {
-                Link("iStats（Chris911）",
-                     destination: URL(string: "https://github.com/Chris911/iStats")!)
-            }
-            Text("系统监控的电池时间估算、循环上限与热压力设计参考了开源项目 iStats（MIT License，© Christophe Naud-Dulude）的思路，并在其 SMC 协议实现基础上完成了当前 macOS 的可用性探针。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
             LabeledContent("问题反馈") {
                 Link("提交 Issue", destination: URL(string: "https://github.com/DeanWanghewei/NotchDeck/issues")!)
             }
