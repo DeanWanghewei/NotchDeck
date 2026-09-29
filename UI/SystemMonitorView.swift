@@ -182,8 +182,8 @@ struct SystemMonitorView: View {
         .help("系统热压力 \(ThermalPressure.label(state))（公开 API 仅提供档位，无具体温度）。持续高负载、高温环境或充电时可能触发，系统会降低 CPU/GPU 性能。")
     }
 
-    /// 电池内联信息：空间不足时优先保留 时间估算 与 循环次数，容量降级省略
-    @ViewBuilder
+    /// 电池内联信息：只保留 电量百分比 / 时间估算 / 循环次数。
+    /// 原始 mAh 每秒跳动且与百分比重复，常驻行不展示，挪到悬停详情。
     private func batteryInline(_ battery: BatteryAndSwap.BatteryInfo) -> some View {
         let timeDescription = BatteryAndSwap.timeDescription(
             isCharging: battery.isCharging, isPlugged: battery.isPlugged,
@@ -191,23 +191,16 @@ struct SystemMonitorView: View {
         let cycles = battery.designCycleCount > 0
             ? "\(battery.cycleCount)/\(battery.designCycleCount) 循环"
             : (battery.cycleCount > 0 ? "\(battery.cycleCount) 循环" : "")
-        ViewThatFits(in: .horizontal) {
-            batteryParts(battery, time: timeDescription, cycles: cycles, capacity: true)
-            batteryParts(battery, time: timeDescription, cycles: cycles, capacity: false)
-        }
+        return batteryParts(battery, time: timeDescription, cycles: cycles)
     }
 
     private func batteryParts(_ battery: BatteryAndSwap.BatteryInfo,
-                              time: String?, cycles: String, capacity: Bool) -> some View {
+                              time: String?, cycles: String) -> some View {
         HStack(spacing: 4) {
             Image(systemName: battery.isPlugged
                   ? (battery.isCharging ? "battery.100.bolt" : "battery.100")
                   : "battery.\(min(100, Int(battery.percent / 25) * 25))")
             Text("\(Int(battery.percent.rounded()))%")
-            if capacity, battery.maxmAh > 0 {
-                Text("· \(battery.currentmAh)/\(battery.maxmAh) mAh")
-                    .foregroundStyle(.tertiary)
-            }
             if let time {
                 Text("· \(time)")
                     .foregroundStyle(.secondary)
