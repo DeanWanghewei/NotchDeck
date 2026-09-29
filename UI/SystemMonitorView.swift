@@ -22,7 +22,28 @@ struct SystemMonitorView: View {
         _pinnedKind = State(initialValue: initialPinnedDetail)
     }
 
+    /// 明细切换过渡：轮换按卡片左右次序横向滑动；首次展开/收起淡入淡出（自顶部轻移）
+    @State private var detailTransition: AnyTransition = .opacity.combined(with: .move(edge: .top))
+
     private var activeDetail: StatDetailKind? { pinnedKind ?? hoveredKind }
+
+    /// 三张卡片从左到右的次序：决定明细轮换的滑动方向
+    private static let detailOrder: [StatDetailKind] = [.cpu, .memory, .disk]
+
+    /// 在状态写入前算好过渡（同一事务内生效）：目标卡片在旧卡片右侧 → 内容自右滑入、旧内容左移退出；反之亦然。
+    /// 首次展开 / 收起没有可比方向，退回淡入淡出。
+    private func updateDetailTransition(from old: StatDetailKind?, to new: StatDetailKind?) {
+        guard let new, let old, old != new,
+              let oldIndex = Self.detailOrder.firstIndex(of: old),
+              let newIndex = Self.detailOrder.firstIndex(of: new) else {
+            detailTransition = .opacity.combined(with: .move(edge: .top))
+            return
+        }
+        let insertEdge: Edge = newIndex > oldIndex ? .trailing : .leading
+        detailTransition = .asymmetric(
+            insertion: .opacity.combined(with: .move(edge: insertEdge)),
+            removal: .opacity.combined(with: .move(edge: insertEdge == .trailing ? .leading : .trailing)))
+    }
 
     var body: some View {
         let stats = monitor.stats
@@ -111,11 +132,14 @@ struct SystemMonitorView: View {
             if let kind = activeDetail {
                 StatDetailView(kind: kind, pinned: pinnedKind == kind, stats: stats)
                     .id(kind)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(detailTransition)
             }
         }
         .onHover { inside in
-            if !inside { hoveredKind = nil }
+            if !inside {
+                updateDetailTransition(from: activeDetail, to: pinnedKind)
+                hoveredKind = nil
+            }
         }
     }
 
@@ -128,10 +152,15 @@ struct SystemMonitorView: View {
                  highlighted: activeDetail == kind,
                  pinned: pinnedKind == kind)
             .onHover { hovering in
-                if hovering { hoveredKind = kind }
+                if hovering, hoveredKind != kind {
+                    updateDetailTransition(from: activeDetail, to: pinnedKind ?? kind)
+                    hoveredKind = kind
+                }
             }
             .onTapGesture {
-                pinnedKind = pinnedKind == kind ? nil : kind
+                let target: StatDetailKind? = pinnedKind == kind ? nil : kind
+                updateDetailTransition(from: activeDetail, to: target)
+                pinnedKind = target
             }
     }
 
