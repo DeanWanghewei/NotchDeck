@@ -223,6 +223,42 @@ extension AnyTransition {
         removal: .opacity.combined(with: .offset(x: -10)))
 }
 
+/// 冷→暖用量色标（连续值 0...1，如 CPU 占用）：负载越低越冷（蓝），越高越暖（红），
+/// 与热力图直觉一致——"围观核"是冷色、"干活核"是暖色。
+/// 分量插值独立成纯函数以便回归测试断言色标端点与中点。
+enum HeatScale {
+    private static let stops: [(position: Double, color: (Double, Double, Double))] = [
+        (0.00, (0.30, 0.56, 1.00)),  // 冷：蓝
+        (0.30, (0.10, 0.80, 0.90)),  // 青
+        (0.55, (0.20, 0.80, 0.35)),  // 绿
+        (0.75, (0.98, 0.72, 0.12)),  // 黄
+        (0.90, (0.98, 0.45, 0.10)),  // 橙
+        (1.00, (0.93, 0.20, 0.16)),  // 热：红
+    ]
+
+    static func components(_ value: Double) -> (Double, Double, Double) {
+        let v = min(1, max(0, value))
+        guard v > stops[0].position else { return stops[0].color }
+        for index in 1..<stops.count where v <= stops[index].position {
+            let previous = stops[index - 1]
+            let current = stops[index]
+            let t = current.position > previous.position
+                ? (v - previous.position) / (current.position - previous.position) : 0
+            return (
+                previous.color.0 + (current.color.0 - previous.color.0) * t,
+                previous.color.1 + (current.color.1 - previous.color.1) * t,
+                previous.color.2 + (current.color.2 - previous.color.2) * t
+            )
+        }
+        return stops[stops.count - 1].color
+    }
+
+    static func color(_ value: Double) -> Color {
+        let rgb = components(value)
+        return Color(red: rgb.0, green: rgb.1, blue: rgb.2)
+    }
+}
+
 enum ByteFormat {
     private static let formatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()

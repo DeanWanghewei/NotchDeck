@@ -102,10 +102,11 @@ struct CustomHeatmapView: View {
     private static let maxCellSize: CGFloat = 10
     private static let minCellSize: CGFloat = 3
     private static let cellSpacing: CGFloat = 2
-    /// 由浅到深的 5 档绿色；数值全部相等时取最深档
-    static let levelOpacities: [Double] = [0.15, 0.32, 0.5, 0.7, 0.9]
-    /// 失败样本的红色
-    private static let failureColor = Color.red.opacity(0.85)
+    /// 由浅到深的 5 档绿色：最低档保持可见（过浅在深浅两种面板上都近乎消失），
+    /// 最高档为实色；数值全部相等时取最深档
+    static let levelOpacities: [Double] = [0.22, 0.42, 0.62, 0.82, 1.0]
+    /// 失败样本的实色红，与任何数值档位都区分开
+    private static let failureColor = Color.red
 
     /// 单行可容纳的样本数：按最小格子尺寸估算
     static func capacity(width: CGFloat) -> Int {

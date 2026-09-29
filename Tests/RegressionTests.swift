@@ -517,6 +517,74 @@ final class MediaAndMonitoringTests: XCTestCase {
         XCTAssertEqual(CPUSample.usage(previous: [1, 2, 3, 4], current: [1, 2, 3, 4]), 0)
     }
 
+    // MARK: 悬停明细（iStat 对齐）：每核占用 / 内存构成 / 挂载卷
+
+    func testCPUCoreUsageWeightsTicksAndRejectsCountMismatch() {
+        // 两个核各差分 100 ticks：核 0 忙 20%（user10/sys10/idle80），核 1 满载（user50/sys50/idle0）
+        let previous: [[UInt32]] = [[10, 10, 80, 0], [0, 0, 0, 0]]
+        let current: [[UInt32]] = [[20, 20, 160, 0], [50, 50, 0, 0]]
+        let result = CPUSample.coreUsage(previous: previous, current: current)
+        XCTAssertEqual(result?.cores.first ?? 0, 0.2, accuracy: 1e-9)
+        XCTAssertEqual(result?.cores.last ?? 0, 1.0, accuracy: 1e-9)
+        XCTAssertEqual(result?.cores.count ?? 0, 2)
+        XCTAssertEqual(result?.usage ?? 0, 0.6, accuracy: 1e-9)   // 1 - 80/200
+        XCTAssertEqual(result?.user ?? 0, 0.3, accuracy: 1e-9)    // (10+50)/200，nice 计入用户态
+        XCTAssertEqual(result?.system ?? 0, 0.3, accuracy: 1e-9)  // (10+50)/200
+        // 单核 tick 回绕仍正确；核数不一致 / 零差分周期返回 nil 由调用方丢弃
+        let wrapped = CPUSample.coreUsage(previous: [[UInt32.max - 4, 0, 20, 0]],
+                                          current: [[5, 0, 30, 0]])
+        XCTAssertEqual(wrapped?.cores.first ?? 0, 0.5, accuracy: 1e-9)
+        XCTAssertNil(CPUSample.coreUsage(previous: [[0, 0, 0, 0]], current: [[0, 0, 0, 0], [0, 0, 0, 0]]))
+        XCTAssertNil(CPUSample.coreUsage(previous: [[1, 1, 1, 1]], current: [[1, 1, 1, 1]]))
+    }
+
+    func testVolumeUsageSortedRootFirstThenName() {
+        let volumes = [
+            VolumeUsage(name: "Backup", usedBytes: 1, totalBytes: 10),
+            VolumeUsage(name: "Macintosh HD", usedBytes: 2, totalBytes: 10, isRoot: true),
+            VolumeUsage(name: "ADATA", usedBytes: 3, totalBytes: 10),
+        ]
+        XCTAssertEqual(VolumeUsage.sorted(volumes).map(\.name), ["Macintosh HD", "ADATA", "Backup"])
+    }
+
+    func testHeatScaleRunsCoolToWarmWithExactStopsAndMidpoints() {
+        // 端点：低负载冷（蓝分量主导）、高负载暖（红分量主导）
+        let cold = HeatScale.components(0)
+        let hot = HeatScale.components(1)
+        XCTAssertGreaterThan(cold.2, cold.0)
+        XCTAssertGreaterThan(hot.0, hot.2)
+        // 0...0.3 段中点（0.15）按 stop 端点线性插值：r=0.2, g=0.68, b=0.95
+        let mid = HeatScale.components(0.15)
+        XCTAssertEqual(mid.0, 0.2, accuracy: 1e-9)
+        XCTAssertEqual(mid.1, 0.68, accuracy: 1e-9)
+        XCTAssertEqual(mid.2, 0.95, accuracy: 1e-9)
+        // 越界钳制到端点色
+        XCTAssertEqual(HeatScale.components(-1).0, cold.0, accuracy: 1e-9)
+        XCTAssertEqual(HeatScale.components(2).0, hot.0, accuracy: 1e-9)
+    }
+
+    @MainActor
+    func testNativeDetailSamplingFillsCoreBreakdownAndVolumes() {
+        let monitor = SystemMonitor()
+        // 首个采样周期没有差分（每核为空），等到第二次发布再断言明细字段
+        let detailed = expectation(description: "Second sample fills detail fields")
+        let subscription = monitor.$stats.dropFirst(2).first().sink { stats in
+            XCTAssertFalse(stats.cpuCores.isEmpty, "每核占用应从第二次采样开始可用")
+            XCTAssertTrue(stats.cpuCores.allSatisfy { (0...1).contains($0) })
+            XCTAssertEqual(stats.memoryUsed, stats.memoryApp + stats.memoryWired + stats.memoryCompressed)
+            XCTAssertLessThanOrEqual(stats.memoryUsed + stats.memoryCached, stats.memoryTotal)
+            XCTAssertGreaterThanOrEqual(stats.loadAverage, 0)
+            XCTAssertFalse(stats.volumes.isEmpty)
+            XCTAssertEqual(stats.volumes.first?.isRoot, true, "根卷应排在首位")
+            XCTAssertTrue(stats.volumes.allSatisfy { $0.totalBytes > 0 && $0.usedBytes <= $0.totalBytes })
+            detailed.fulfill()
+        }
+        monitor.start()
+        defer { monitor.stop() }
+        wait(for: [detailed], timeout: 6)
+        withExtendedLifetime(subscription) {}
+    }
+
     // MARK: 电池增强（iStats 对齐）：时间估算 / 设计循环上限 / 电压电流
 
     func testBatteryTimeFormattingMatchesIStatsStyle() {
