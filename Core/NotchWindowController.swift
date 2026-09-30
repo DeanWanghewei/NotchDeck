@@ -82,7 +82,74 @@ final class NotchWindowController: NSObject {
     private func restorePresentation() {
         refreshFrame()
         guard state == .expanding || state == .expanded else { return }
-        panel?.orderFrontRegardless()
+        orderFrontEnsuringVisible()
+    }
+
+    /// 置前面板并确认真的落在当前 Space 上。
+    ///
+    /// Space 生命周期扰动（全屏空间创建/销毁、应用重启、更新程序强切前台等）
+    /// 之后，canJoinAllSpaces 窗口的归属可能在窗口服务器侧变陈旧：
+    /// orderFrontRegardless 被静默忽略，面板实际不可见而状态机照常进入
+    /// expanded，悬停呼出从此失效（v0.19.2 在 macOS 27.2 实测）。因此置前后
+    /// 必须校验；失败时重挂 collectionBehavior 强制窗口服务器重算归属并重试，
+    /// 留待后续应用激活通知兜底。
+    /// 置前面板并确认真的合成在屏幕上。
+    ///
+    /// Space 生命周期扰动（全屏空间创建/销毁、应用重启、更新程序强切前台等）
+    /// 之后，canJoinAllSpaces 窗口可能被窗口服务器留在一个不可见空间上：
+    /// orderFrontRegardless 静默空转，面板实际不可见而状态机照常进入 expanded，
+    /// 悬停呼出从此失效（v0.19.2 在 macOS 27.2 实测）。因此置前后必须用
+    /// CGWindowList 自查真实合成状态（isVisible / isOnActiveSpace 在
+    /// macOS 27.2 上可能谎报，不可用作判据）；未上屏则先 orderOut 摘下、
+    /// 重挂 collectionBehavior 强制重算归属、再置前重试，仍失败时留给
+    /// restorePresentation 在下次应用激活通知时兜底。
+    private func orderFrontEnsuringVisible(attempt: Int = 0) {
+        guard let panel else { return }
+        panel.orderFrontRegardless()
+        if Self.isCompositedOnScreen(panel.windowNumber) { return }
+        guard attempt < 3 else {
+            DebugLog.write("present stranded after \(attempt + 1) attempts, wait for activation fallback")
+            return
+        }
+        // 搁浅时窗口仍处于置入状态，单纯再次置前不会跨空间迁移；
+        // 必须先摘下并重挂归属，强迫窗口服务器把它重新派给当前 Space。
+        // 禁止 union(.moveToActiveSpace) 之类的组合——与 canJoinAllSpaces
+        // 并存在 macOS 27.2 直接断言崩溃（实测）。
+        panel.orderOut(nil)
+        let behavior = panel.collectionBehavior
+        panel.collectionBehavior = behavior.subtracting(.canJoinAllSpaces)
+        panel.collectionBehavior = behavior
+        panel.orderFrontRegardless()
+        DebugLog.write("present reassert attempt=\(attempt)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self, self.state == .expanding || self.state == .expanded else { return }
+            self.orderFrontEnsuringVisible(attempt: attempt + 1)
+        }
+    }
+
+    /// 面板是否真的合成在屏幕上：用自身 windowNumber 查 CGWindowList。
+    /// 对自己窗口的查询不受其他进程窗口信息门控影响，是唯一可信判据。
+    private static func isCompositedOnScreen(_ windowNumber: Int) -> Bool {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly],
+                                                    CGWindowID(windowNumber)) as? [[String: Any]] else {
+            return false
+        }
+        return !list.isEmpty
+    }
+
+    /// 稀少异常事件落盘（/tmp/notchdeck-debug.log），日常路径零开销零噪音
+    enum DebugLog {
+        static func write(_ message: String) {
+            let line = "\(Date().timeIntervalSince1970) \(message)\n"
+            let path = URL(fileURLWithPath: "/tmp/notchdeck-debug.log")
+            if let handle = try? FileHandle(forWritingTo: path) {
+                handle.seekToEndOfFile()
+                handle.write(Data(line.utf8))
+                try? handle.close()
+            } else {
+                try? Data(line.utf8).write(to: path)
+            }
+        }
     }
 
     /// 按当前配置重排窗口（收起状态下也生效，切换配置无感）
@@ -123,7 +190,7 @@ final class NotchWindowController: NSObject {
         state = .expanding
 
         refreshFrame()
-        panel?.orderFrontRegardless()
+        orderFrontEnsuringVisible()
         appModel.isExpanded = true
 
         DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration) { [weak self] in

@@ -9,6 +9,7 @@ NotchDeck 是 macOS 刘海信息岛（灵动岛）应用：SwiftUI + 无边框 N
 | `README.md` | 产品文档：功能、权限模型、构建与验证命令 |
 | `docs/design-conventions.md` | **项目约束**：颜色与数据展示规范（详见下） |
 | `docs/custom-items.md` | 自定义命令小部件的用户文档（写法与规则） |
+| `docs/macos-notes.md` | 平台实证笔记：各 macOS 版本的窗口/Space/电源陷阱与探针结论（开发参考，README 只留摘要） |
 | `docs/PROJECT_REVIEW.md` | 一次性项目检查与修复记录（2026-09-13，历史存档，不随开发更新） |
 
 ## 硬约束（改动前必读）
