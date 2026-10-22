@@ -25,6 +25,26 @@ final class NotchWindowController: NSObject {
     /// 动画代数：快速连续切换时使旧的完成回调失效
     private var animationGeneration = 0
 
+    private lazy var visibilityRecovery = PanelVisibilityRecovery(
+        isOnScreen: { [weak self] in
+            guard let panel = self?.panel else { return nil }
+            let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
+                as? [[String: Any]]
+            return PanelVisibility.isOnScreen(windowNumber: panel.windowNumber, windows: windows)
+        },
+        orderFront: { [weak self] in self?.panel?.orderFrontRegardless() },
+        reattach: { [weak self] in
+            guard let panel = self?.panel else { return }
+            // 先摘下再重挂，强制窗口服务器重算 Space 归属；
+            // canJoinAllSpaces 与 moveToActiveSpace 并存会触发 AppKit 断言。
+            panel.orderOut(nil)
+            let behavior = panel.collectionBehavior
+            panel.collectionBehavior = behavior.subtracting(.canJoinAllSpaces)
+            panel.collectionBehavior = behavior
+            DebugLog.write("present reattach window=\(panel.windowNumber)")
+        },
+        didFail: { [weak self] in self?.presentationDidFail() })
+
     func configure(with appModel: AppModel) {
         guard panel == nil, let screen = PanelMetrics.targetScreen else { return }
         self.appModel = appModel
@@ -82,59 +102,17 @@ final class NotchWindowController: NSObject {
     private func restorePresentation() {
         refreshFrame()
         guard state == .expanding || state == .expanded else { return }
-        orderFrontEnsuringVisible()
+        visibilityRecovery.present()
     }
 
-    /// 置前面板并确认真的落在当前 Space 上。
-    ///
-    /// Space 生命周期扰动（全屏空间创建/销毁、应用重启、更新程序强切前台等）
-    /// 之后，canJoinAllSpaces 窗口的归属可能在窗口服务器侧变陈旧：
-    /// orderFrontRegardless 被静默忽略，面板实际不可见而状态机照常进入
-    /// expanded，悬停呼出从此失效（v0.19.2 在 macOS 27.2 实测）。因此置前后
-    /// 必须校验；失败时重挂 collectionBehavior 强制窗口服务器重算归属并重试，
-    /// 留待后续应用激活通知兜底。
-    /// 置前面板并确认真的合成在屏幕上。
-    ///
-    /// Space 生命周期扰动（全屏空间创建/销毁、应用重启、更新程序强切前台等）
-    /// 之后，canJoinAllSpaces 窗口可能被窗口服务器留在一个不可见空间上：
-    /// orderFrontRegardless 静默空转，面板实际不可见而状态机照常进入 expanded，
-    /// 悬停呼出从此失效（v0.19.2 在 macOS 27.2 实测）。因此置前后必须用
-    /// CGWindowList 自查真实合成状态（isVisible / isOnActiveSpace 在
-    /// macOS 27.2 上可能谎报，不可用作判据）；未上屏则先 orderOut 摘下、
-    /// 重挂 collectionBehavior 强制重算归属、再置前重试，仍失败时留给
-    /// restorePresentation 在下次应用激活通知时兜底。
-    private func orderFrontEnsuringVisible(attempt: Int = 0) {
-        guard let panel else { return }
-        panel.orderFrontRegardless()
-        if Self.isCompositedOnScreen(panel.windowNumber) { return }
-        guard attempt < 3 else {
-            DebugLog.write("present stranded after \(attempt + 1) attempts, wait for activation fallback")
-            return
-        }
-        // 搁浅时窗口仍处于置入状态，单纯再次置前不会跨空间迁移；
-        // 必须先摘下并重挂归属，强迫窗口服务器把它重新派给当前 Space。
-        // 禁止 union(.moveToActiveSpace) 之类的组合——与 canJoinAllSpaces
-        // 并存在 macOS 27.2 直接断言崩溃（实测）。
-        panel.orderOut(nil)
-        let behavior = panel.collectionBehavior
-        panel.collectionBehavior = behavior.subtracting(.canJoinAllSpaces)
-        panel.collectionBehavior = behavior
-        panel.orderFrontRegardless()
-        DebugLog.write("present reassert attempt=\(attempt)")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self, self.state == .expanding || self.state == .expanded else { return }
-            self.orderFrontEnsuringVisible(attempt: attempt + 1)
-        }
-    }
-
-    /// 面板是否真的合成在屏幕上：用自身 windowNumber 查 CGWindowList。
-    /// 对自己窗口的查询不受其他进程窗口信息门控影响，是唯一可信判据。
-    private static func isCompositedOnScreen(_ windowNumber: Int) -> Bool {
-        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly],
-                                                    CGWindowID(windowNumber)) as? [[String: Any]] else {
-            return false
-        }
-        return !list.isEmpty
+    /// 恢复失败必须回到可再次唤起的状态，否则鼠标热区会一直误认面板已展开。
+    private func presentationDidFail() {
+        guard state == .expanding || state == .expanded else { return }
+        DebugLog.write("present stranded, reset to collapsed window=\(panel?.windowNumber ?? -1)")
+        animationGeneration += 1
+        state = .collapsed
+        appModel?.isExpanded = false
+        panel?.orderOut(nil)
     }
 
     /// 稀少异常事件落盘（/tmp/notchdeck-debug.log），日常路径零开销零噪音
@@ -190,8 +168,8 @@ final class NotchWindowController: NSObject {
         state = .expanding
 
         refreshFrame()
-        orderFrontEnsuringVisible()
         appModel.isExpanded = true
+        visibilityRecovery.present()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration) { [weak self] in
             guard let self, self.animationGeneration == generation else { return }
@@ -204,6 +182,7 @@ final class NotchWindowController: NSObject {
         animationGeneration += 1
         let generation = animationGeneration
         state = .collapsing
+        visibilityRecovery.cancel()
         appModel.isExpanded = false
 
         DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration) { [weak self] in
