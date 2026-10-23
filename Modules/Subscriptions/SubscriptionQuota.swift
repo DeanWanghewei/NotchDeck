@@ -37,15 +37,20 @@ struct SubscriptionQuotaSnapshot: Equatable {
 enum SubscriptionQuotaError: Error, Equatable {
     case invalidResponse, signInRequired, missingKey, missingCLI, timeout, cancelled, network, credentialStorage
     case authFileUnavailable, invalidAuthFile
+    case invalidAuthJSON, unsupportedAuthMode, missingAuthToken, authJSONTooLarge
     case http(Int)
 
     func message(for provider: SubscriptionProvider) -> String {
         switch self {
         case .invalidResponse: return "未识别到额度数据，请查看官方用量页"
         case .signInRequired:
-            return provider == .glm ? "密钥无效或无权查询，请检查 Coding Plan 密钥" : "登录已失效或未使用 ChatGPT 登录，请重新导入 auth.json"
+            return provider == .glm ? "密钥无效或无权查询，请检查 Coding Plan 密钥" : "登录已失效或未使用 ChatGPT 登录，请重新粘贴有效的登录 JSON"
         case .authFileUnavailable: return "无法读取登录文件，请重新选择 auth.json"
-        case .invalidAuthFile: return "登录文件无效，请选择 ChatGPT 登录生成的 auth.json"
+        case .invalidAuthFile: return "登录数据无效，请粘贴完整的 ChatGPT 登录 JSON"
+        case .invalidAuthJSON: return "JSON 格式错误：请粘贴完整对象，包含外层大括号，不要填写文件路径或 Markdown 代码围栏"
+        case .unsupportedAuthMode: return "这是 API Key 或其他登录方式；查询订阅额度需要 ChatGPT 登录的 JSON"
+        case .missingAuthToken: return "JSON 缺少 tokens.access_token，请粘贴完整的 Codex 登录信息"
+        case .authJSONTooLarge: return "登录 JSON 超过 256 KiB，请检查是否粘贴了其他内容"
         case .missingKey: return "请在组件设置中保存 GLM Coding Plan 密钥"
         case .missingCLI: return "未找到 Codex CLI，请安装或在组件设置中指定路径"
         case .timeout: return "查询超时，稍后可重试"
@@ -61,7 +66,18 @@ enum SubscriptionQuotaError: Error, Equatable {
 /// 不用调用次数推算百分比，也不把 API 现金余额、模型独立额度混入订阅主额度。
 enum SubscriptionQuotaParser {
     static func glm(_ data: Data, now: Date = Date()) throws -> SubscriptionQuotaSnapshot {
-        struct Limit: Decodable { let type: String; let percentage: Double? }
+        struct Limit: Decodable {
+            let type: String
+            let percentage: Double?
+            let unit: Int?
+            let number: Int?
+            var title: String {
+                guard type == "TOKENS_LIMIT" else { return "工具调用" }
+                if unit == 3, number == 5 { return "5 小时" }
+                if unit == 6, number == 1 { return "每周" }
+                return "编码额度"
+            }
+        }
         struct Payload: Decodable { let limits: [Limit]; let level: String? }
         struct Envelope: Decodable { let code: Int?; let success: Bool?; let data: Payload? }
         let decoder = JSONDecoder()
@@ -73,17 +89,31 @@ enum SubscriptionQuotaParser {
         if envelope?.success == false { throw SubscriptionQuotaError.invalidResponse }
         let payload = envelope?.data ?? (try? decoder.decode(Payload.self, from: data))
         guard let payload else { throw SubscriptionQuotaError.invalidResponse }
-        var windows: [SubscriptionQuotaWindow] = []
+        // 用户确认 5 小时与周额度独立；公开 CodexBar zai.js 样本映射 unit=3 为小时、6 为周。
+        // 只识别已确认的 (3,5)/(6,1)，不按返回顺序判断，其他窗口保留原类别。
+        // 参考：https://github.com/steipete/CodexBar/blob/main/Sources/CodexBarCore/Resources/Plugins/zai.js
+        // 比较完整原始对象，避免忽略尚不认识的字段后误删不同额度。
+        let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let rawPayload = raw?["data"] as? [String: Any] ?? raw
+        let rawLimits = rawPayload?["limits"] as? [NSDictionary] ?? []
+        var seen: [NSDictionary] = []
+        var limits: [Limit] = []
         for (index, limit) in payload.limits.enumerated() {
-            guard let percent = limit.percentage, percent.isFinite, percent >= 0 else { continue }
-            let title: String
-            switch limit.type {
-            // 官方插件未提供稳定的周期/重置字段契约；不用旧版“5 小时”标签猜测新版周额度。
-            case "TOKENS_LIMIT": title = "编码额度"
-            case "TIME_LIMIT": title = "工具调用"
-            default: continue
+            guard ["TOKENS_LIMIT", "TIME_LIMIT"].contains(limit.type),
+                  let percent = limit.percentage, percent.isFinite, percent >= 0 else { continue }
+            if index < rawLimits.count {
+                let object = rawLimits[index]
+                if seen.contains(where: { $0.isEqual(object) }) { continue }
+                seen.append(object)
             }
-            windows.append(SubscriptionQuotaWindow(id: "\(limit.type)-\(index)", title: title, usedPercent: percent))
+            limits.append(limit)
+        }
+        let windows = limits.enumerated().map { index, limit in
+            let base = limit.title
+            let siblings = limits.filter { $0.title == base }
+            let ordinal = limits.prefix(index + 1).filter { $0.title == base }.count
+            let title = siblings.count > 1 ? "\(base) \(ordinal)" : base
+            return SubscriptionQuotaWindow(id: "\(limit.type)-\(index)", title: title, usedPercent: limit.percentage!)
         }
         guard !windows.isEmpty else { throw SubscriptionQuotaError.invalidResponse }
         return SubscriptionQuotaSnapshot(plan: payload.level, windows: windows, fetchedAt: now)

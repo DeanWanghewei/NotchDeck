@@ -33,6 +33,52 @@ final class SubscriptionQuotaTests: XCTestCase {
         XCTAssertTrue(snapshot.windows.allSatisfy { $0.resetsAt == nil })
     }
 
+    func testGLMDistinguishesWindowsAndOnlyRemovesExactDuplicates() throws {
+        let data = Data(#"{"limits":[{"type":"TOKENS_LIMIT","percentage":28,"unit":3,"number":5},{"type":"TOKENS_LIMIT","percentage":28,"unit":3,"number":5},{"type":"TOKENS_LIMIT","percentage":28,"unit":6,"number":1},{"type":"TIME_LIMIT","percentage":12}]}"#.utf8)
+        let result = try SubscriptionQuotaParser.glm(data)
+        XCTAssertEqual(result.windows.map(\.title), ["5 小时", "每周", "工具调用"])
+        XCTAssertEqual(result.windows.map(\.usedPercent), [28, 28, 12])
+        let reverse = Data(#"{"limits":[{"type":"TOKENS_LIMIT","percentage":73,"unit":6,"number":1},{"type":"TOKENS_LIMIT","percentage":12,"unit":3,"number":5}]}"#.utf8)
+        let reversed = try SubscriptionQuotaParser.glm(reverse)
+        XCTAssertEqual(reversed.windows.map(\.title), ["每周", "5 小时"])
+        XCTAssertEqual(reversed.windows.map(\.usedPercent), [73, 12])
+        let unknown = Data(#"{"limits":[{"type":"TOKENS_LIMIT","percentage":28,"future":"a"},{"type":"TOKENS_LIMIT","percentage":28,"future":"b"}]}"#.utf8)
+        XCTAssertEqual(try SubscriptionQuotaParser.glm(unknown).windows.count, 2)
+    }
+
+    func testPastedJSONErrorsAreSpecificAndDoNotExposeCredentials() throws {
+        let cases: [(String, SubscriptionQuotaError)] = [
+            ("/tmp/auth.json", .invalidAuthJSON),
+            ("{broken", .invalidAuthJSON),
+            (#"{"tokens":{}}"#, .missingAuthToken),
+            (#"{"tokens":{"access_token":"  "}}"#, .missingAuthToken),
+            (#"{"auth_mode":"apikey","OPENAI_API_KEY":"secret"}"#, .unsupportedAuthMode),
+            (String(repeating: "x", count: 256 * 1024 + 1), .authJSONTooLarge)
+        ]
+        for (text, expected) in cases {
+            XCTAssertThrowsError(try CodexAuthDocument.parsePastedJSON(text)) { error in
+                XCTAssertEqual(error as? SubscriptionQuotaError, expected)
+                XCTAssertFalse(expected.message(for: .codex).contains("secret"))
+            }
+        }
+        XCTAssertEqual(try CodexAuthDocument.parsePastedJSON(String(decoding: authData(), as: UTF8.self)), authData())
+    }
+
+    @MainActor
+    func testInvalidPastedJSONDoesNotStartQueryOrReplaceSavedAccount() {
+        withFixture { settings, secrets, client in
+            let account = SubscriptionAccount(provider: .codex)
+            let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
+            var saved: Bool?
+            module.saveCodexAccount(account, authJSON: "{bad") { saved = $0 }
+            XCTAssertEqual(saved, false)
+            XCTAssertTrue(client.codex.isEmpty)
+            XCTAssertTrue(secrets.auth.isEmpty)
+            XCTAssertFalse(module.verifying)
+            XCTAssertTrue(module.settingsMessage?.contains("JSON 格式错误") == true)
+        }
+    }
+
     func testMissingInvalidAndUnauthorizedPayloadsNeverBecomeZeroUsage() {
         for input in ["{}", "invalid", #"{"limits":[{"type":"TOKENS_LIMIT"}]}"#,
                       #"{"limits":[{"type":"TOKENS_LIMIT","percentage":-1}]}"#,
@@ -326,11 +372,11 @@ final class SubscriptionQuotaTests: XCTestCase {
             module.preferences.update { $0.demoMode = false; $0.codexExecutable = "/usr/bin/true" }
             let account = SubscriptionAccount(provider: .codex, alias: "工作")
             var saved: Bool?
-            module.saveCodexAccount(account, authPath: "/tmp/account auth.json") { saved = $0 }
+            module.saveCodexAccount(account, authJSON: String(decoding: authData(), as: UTF8.self)) { saved = $0 }
             XCTAssertTrue(module.verifying)
             XCTAssertTrue(module.preferences.value.accounts.isEmpty)
             XCTAssertTrue(secrets.auth.isEmpty)
-            if case .file(let path) = client.codex[0].input.auth { XCTAssertEqual(path, "/tmp/account auth.json") }
+            if case .saved(let data) = client.codex[0].input.auth { XCTAssertEqual(data, authData()) }
             else { XCTFail("导入必须验证指定文件") }
             client.codex[0].completion(CodexQuotaResult(quota: .success(.demo(for: .codex)), authJSON: authData()))
             settle()
@@ -358,13 +404,13 @@ final class SubscriptionQuotaTests: XCTestCase {
             var replacement = account
             replacement.alias = "新账号"
             var saved: Bool?
-            module.saveCodexAccount(replacement, authPath: "/tmp/new.json") { saved = $0 }
+            module.saveCodexAccount(replacement, authJSON: String(decoding: authData(), as: UTF8.self)) { saved = $0 }
             client.codex[0].completion(CodexQuotaResult(quota: .failure(.signInRequired), authJSON: authData("invalid-login")))
             settle()
             XCTAssertEqual(saved, false)
             XCTAssertEqual(secrets.auth[account.id], authData())
             XCTAssertEqual(module.preferences.value.accounts, [account])
-            module.saveCodexAccount(replacement, authPath: "/tmp/new.json") { saved = $0 }
+            module.saveCodexAccount(replacement, authJSON: String(decoding: authData(), as: UTF8.self)) { saved = $0 }
             module.cancelAccountVerification()
             client.codex[1].completion(CodexQuotaResult(quota: .success(.demo(for: .codex)), authJSON: authData("new-login")))
             settle()
@@ -424,7 +470,7 @@ final class SubscriptionQuotaTests: XCTestCase {
             module.preferences.update { $0.demoMode = false; $0.codexExecutable = "/usr/bin/true" }
             let accounts = [SubscriptionAccount(provider: .codex, alias: "相同别名"), SubscriptionAccount(provider: .codex, alias: "相同别名")]
             for (index, account) in accounts.enumerated() {
-                module.saveCodexAccount(account, authPath: "/tmp/fixture-\(index).json") { XCTAssertTrue($0) }
+                module.saveCodexAccount(account, authJSON: String(decoding: authData(), as: UTF8.self)) { XCTAssertTrue($0) }
                 client.codex[index].completion(CodexQuotaResult(quota: .success(.demo(for: .codex)), authJSON: authData("account-\(index)-test-token")))
                 settle()
             }
@@ -452,7 +498,7 @@ final class SubscriptionQuotaTests: XCTestCase {
             module.preferences.update { $0.codexExecutable = "/usr/bin/true" }
             secrets.failCodexSave = true
             var saved: Bool?
-            module.saveCodexAccount(SubscriptionAccount(provider: .codex), authPath: "/tmp/fixture.json") { saved = $0 }
+            module.saveCodexAccount(SubscriptionAccount(provider: .codex), authJSON: String(decoding: authData(), as: UTF8.self)) { saved = $0 }
             client.codex[0].completion(CodexQuotaResult(quota: .success(.demo(for: .codex)), authJSON: authData()))
             settle()
             XCTAssertEqual(saved, false)

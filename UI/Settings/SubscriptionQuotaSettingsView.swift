@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct SubscriptionQuotaSettingsView: View {
     @ObservedObject var module: SubscriptionQuotaModule
@@ -34,7 +33,7 @@ struct SubscriptionQuotaSettingsView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(account.displayName(in: preferences.value.accounts)).fontWeight(.medium).lineLimit(1)
                                 Text(account.provider.title + (account.provider == .codex ?
-                                    (account.codexAuthStored ? " · 登录已独立保存" : " · 跟随本机登录，建议导入固定账号") : " · 独立密钥"))
+                                    (account.codexAuthStored ? " · 登录已独立保存" : " · 跟随本机登录，请粘贴 JSON 固定账号") : " · 独立密钥"))
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 4)
@@ -58,7 +57,7 @@ struct SubscriptionQuotaSettingsView: View {
                         .onSubmit { applyCodexPath() }
                     Button("应用路径") { applyCodexPath() }
                 }
-                Text("导入 auth.json 时先验证登录与额度接口，成功后按账号加密保存到应用 Data 目录。后续查询不依赖原文件或 Codex 当前登录，token 刷新结果也会保存。")
+                Text("粘贴登录 JSON 后先验证格式与额度接口，成功后按账号加密保存到应用 Data 目录。后续查询不依赖 Codex 当前登录，token 刷新结果也会保存。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("刷新") {
@@ -103,7 +102,7 @@ struct SubscriptionAccountEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var account: SubscriptionAccount
     @State private var glmKey = ""
-    @State private var authPath = ""
+    @State private var authJSON = ""
 
     init(module: SubscriptionQuotaModule, provider: SubscriptionProvider, account: SubscriptionAccount? = nil) {
         self.module = module
@@ -121,18 +120,22 @@ struct SubscriptionAccountEditor: View {
             if provider == .glm {
                 SecureField(original == nil ? "Coding Plan 密钥" : "新密钥（留空保留已有密钥）", text: $glmKey)
                     .textFieldStyle(.roundedBorder)
-                Text("密钥按账号加密保存在应用 Data 目录，不访问钥匙串。旧版账号请重新填写密钥或导入登录。")
+                Text("密钥按账号加密保存在应用 Data 目录，不访问钥匙串。旧版账号请重新填写密钥或粘贴登录 JSON。")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
-                HStack {
-                    TextField(original == nil ? "auth.json 文件路径，支持 ~/" : "新 auth.json 路径（留空保留已保存登录）", text: $authPath)
-                        .textFieldStyle(.roundedBorder)
-                    Button("选择…") { chooseAuthFile() }
-                }
-                Text(original?.codexAuthStored == false ?
-                     "此旧版账号目前跟随本机登录。导入 auth.json 并验证后，即可独立保留此账号。" :
-                     "验证通过后保存登录，原文件可移动或删除。切换 Codex 当前账号不会改变已保存的账号。仅支持 ChatGPT 订阅登录。")
+                Text(original == nil ? "账号登录 JSON" : "新的账号登录 JSON（留空保留已有登录）")
                     .font(.caption).foregroundStyle(.secondary)
+                TextEditor(text: $authJSON)
+                    .font(.system(size: 11, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .frame(height: 116)
+                    .padding(6)
+                    .background(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
+                    .accessibilityLabel("粘贴完整的 Codex 登录 JSON")
+                    .disabled(module.verifying)
+                Text("粘贴完整的 Codex 登录 JSON（包含 tokens.access_token）。仅支持 ChatGPT 订阅登录，不支持 API Key；验证成功后加密保存，切换账号不受影响。")
+                    .font(.caption).foregroundStyle(.secondary)
+
             }
             if let message = module.settingsMessage {
                 Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -142,25 +145,15 @@ struct SubscriptionAccountEditor: View {
                 if module.verifying { ProgressView().controlSize(.small); Text("验证中…").font(.caption) }
                 Spacer()
                 Button("取消") { module.cancelAccountVerification(); dismiss() }.keyboardShortcut(.cancelAction)
-                Button(provider == .codex && (original == nil || !authPath.isEmpty) ? "验证并保存" : "保存账号") { save() }
+                Button(provider == .codex && (original == nil || !authJSON.isEmpty) ? "验证并保存" : "保存账号") { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(module.verifying || (original == nil && (provider == .glm ? glmKey : authPath).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    .disabled(module.verifying || (original == nil && (provider == .glm ? glmKey : authJSON).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
             }
         }
-        .padding(24).frame(width: 520, height: 350)
+        .padding(24).frame(width: 520, height: provider == .codex ? 460 : 350)
         .onAppear { module.clearSettingsMessage() }
-        .onDisappear { module.cancelAccountVerification() }
+        .onDisappear { module.cancelAccountVerification(); authJSON = "" }
         .interactiveDismissDisabled(module.verifying)
-    }
-
-    private func chooseAuthFile() {
-        let panel = NSOpenPanel()
-        panel.title = "选择此账号的 Codex auth.json"
-        panel.allowedContentTypes = [.json]
-        panel.showsHiddenFiles = true
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        if panel.runModal() == .OK, let url = panel.url { authPath = url.path }
     }
 
     private func save() {
@@ -168,7 +161,7 @@ struct SubscriptionAccountEditor: View {
         if provider == .glm {
             if module.saveGLMAccount(account, key: glmKey) { glmKey = ""; dismiss() }
         } else {
-            module.saveCodexAccount(account, authPath: authPath) { saved in if saved { dismiss() } }
+            module.saveCodexAccount(account, authJSON: authJSON) { saved in if saved { authJSON = ""; dismiss() } }
         }
     }
 }

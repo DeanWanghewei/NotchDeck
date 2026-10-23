@@ -222,10 +222,10 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
         return true
     }
 
-    func saveCodexAccount(_ account: SubscriptionAccount, authPath: String, completion: @escaping (Bool) -> Void) {
+    func saveCodexAccount(_ account: SubscriptionAccount, authJSON: String, completion: @escaping (Bool) -> Void) {
         guard account.provider == .codex, validAlias(account.alias), !verifying else { completion(false); return }
-        let path = authPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        if path.isEmpty, let existing = preferences.value.accounts.first(where: { $0.id == account.id && $0.provider == .codex }) {
+        let json = authJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        if json.isEmpty, let existing = preferences.value.accounts.first(where: { $0.id == account.id && $0.provider == .codex }) {
             var next = account
             next.codexAuthStored = existing.codexAuthStored
             let saved = storeAccount(next)
@@ -234,7 +234,10 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
             completion(saved)
             return
         }
-        guard !path.isEmpty else { settingsMessage = "请选择此账号的 auth.json 登录文件。"; completion(false); return }
+        let auth: Data
+        do { auth = try CodexAuthDocument.parsePastedJSON(json) }
+        catch let error as SubscriptionQuotaError { settingsMessage = error.message(for: .codex); completion(false); return }
+        catch { settingsMessage = "无法解析登录 JSON。"; completion(false); return }
         guard let executable = CodexQuotaQuery.executable(override: preferences.value.codexExecutable) else {
             settingsMessage = SubscriptionQuotaError.missingCLI.message(for: .codex); completion(false); return
         }
@@ -242,8 +245,8 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
         self.verificationID = verificationID
         verifyingAccountID = account.id
         verifying = true
-        settingsMessage = "正在验证 Codex 登录与额度接口…"
-        verificationRequest = clients.codex(CodexQuotaInput(executable: executable, auth: .file(path))) { [weak self] response in
+        settingsMessage = "JSON 格式已通过，正在验证登录并查询订阅额度…"
+        verificationRequest = clients.codex(CodexQuotaInput(executable: executable, auth: .saved(auth))) { [weak self] response in
             DispatchQueue.main.async {
                 guard let self, self.verificationID == verificationID else { return }
                 self.verifying = false

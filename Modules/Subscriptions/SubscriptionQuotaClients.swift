@@ -79,6 +79,24 @@ protocol SubscriptionSecretStore {
 enum CodexAuthDocument {
     static let maximumBytes = 256 * 1024
 
+    static func parsePastedJSON(_ text: String) throws -> Data {
+        let data = Data(text.utf8)
+        guard data.count <= maximumBytes else { throw SubscriptionQuotaError.authJSONTooLarge }
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SubscriptionQuotaError.invalidAuthJSON
+        }
+        if let mode = object["auth_mode"] as? String, mode != "chatgpt" {
+            throw SubscriptionQuotaError.unsupportedAuthMode
+        }
+        guard let tokens = object["tokens"] as? [String: Any],
+              let token = tokens["access_token"] as? String,
+              !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            if object["OPENAI_API_KEY"] is String { throw SubscriptionQuotaError.unsupportedAuthMode }
+            throw SubscriptionQuotaError.missingAuthToken
+        }
+        return try validate(data)
+    }
+
     static func validate(_ data: Data) throws -> Data {
         guard data.count <= maximumBytes,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
