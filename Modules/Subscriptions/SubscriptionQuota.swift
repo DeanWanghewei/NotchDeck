@@ -35,7 +35,7 @@ struct SubscriptionQuotaSnapshot: Equatable {
 }
 
 enum SubscriptionQuotaError: Error, Equatable {
-    case invalidResponse, signInRequired, missingKey, missingCLI, timeout, cancelled, network, keychain
+    case invalidResponse, signInRequired, missingKey, missingCLI, timeout, cancelled, network, credentialStorage
     case authFileUnavailable, invalidAuthFile
     case http(Int)
 
@@ -51,7 +51,7 @@ enum SubscriptionQuotaError: Error, Equatable {
         case .timeout: return "查询超时，稍后可重试"
         case .cancelled: return "查询已取消"
         case .network: return "无法连接服务，请检查网络后重试"
-        case .keychain: return "无法访问此账号的钥匙串项目，请重新保存密钥或导入登录"
+        case .credentialStorage: return "无法读写本地加密凭据，请检查 Data 目录权限或恢复完整备份"
         case .http(let status): return "服务暂时不可用（HTTP \(status)）"
         }
     }

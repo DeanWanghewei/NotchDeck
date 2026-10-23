@@ -1,7 +1,5 @@
 import Darwin
 import Foundation
-import LocalAuthentication
-import Security
 
 /// 取消既阻断网络/子进程，也供组件屏蔽在途旧结果；取消回调不在持锁时执行。
 final class SubscriptionQuotaRequest {
@@ -75,60 +73,6 @@ protocol SubscriptionSecretStore {
     func readCodexAuth(accountID: String) throws -> Data?
     func saveCodexAuth(_ data: Data, accountID: String) throws
     func removeCodexAuth(accountID: String) throws
-}
-
-/// 每个账号独立保存；仅访问 NotchDeck 的项目，不读取 Codex 或浏览器的钥匙串。
-struct SubscriptionKeychain: SubscriptionSecretStore {
-    static func itemName(provider: SubscriptionProvider, accountID: String) -> String {
-        if provider == .glm && accountID == SubscriptionAccount.legacyGLMID { return "glm-coding-plan" }
-        return "\(provider.rawValue).\(accountID)"
-    }
-
-    private func query(_ provider: SubscriptionProvider, _ accountID: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "com.notchdeck.app.subscription-quota",
-         kSecAttrAccount as String: Self.itemName(provider: provider, accountID: accountID)]
-    }
-
-    private func read(_ provider: SubscriptionProvider, _ accountID: String) throws -> Data? {
-        var query = query(provider, accountID)
-        query[kSecReturnData as String] = true
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        query[kSecUseAuthenticationContext as String] = context
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data else { throw SubscriptionQuotaError.keychain }
-        return data
-    }
-
-    private func save(_ data: Data, provider: SubscriptionProvider, accountID: String) throws {
-        let query = query(provider, accountID)
-        let attributes = [kSecValueData as String: data]
-        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if status == errSecItemNotFound {
-            var item = query
-            item[kSecValueData as String] = data
-            guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw SubscriptionQuotaError.keychain }
-        } else if status != errSecSuccess { throw SubscriptionQuotaError.keychain }
-    }
-
-    private func remove(_ provider: SubscriptionProvider, _ accountID: String) throws {
-        let status = SecItemDelete(query(provider, accountID) as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw SubscriptionQuotaError.keychain }
-    }
-
-    func readGLMKey(accountID: String) throws -> String? {
-        guard let data = try read(.glm, accountID) else { return nil }
-        guard let key = String(data: data, encoding: .utf8) else { throw SubscriptionQuotaError.keychain }
-        return key
-    }
-    func saveGLMKey(_ key: String, accountID: String) throws { try save(Data(key.utf8), provider: .glm, accountID: accountID) }
-    func removeGLMKey(accountID: String) throws { try remove(.glm, accountID) }
-    func readCodexAuth(accountID: String) throws -> Data? { try read(.codex, accountID) }
-    func saveCodexAuth(_ data: Data, accountID: String) throws { try save(data, provider: .codex, accountID: accountID) }
-    func removeCodexAuth(accountID: String) throws { try remove(.codex, accountID) }
 }
 
 /// 只在用户导入时读取指定文件；账号元数据不保存 token，原文件不会被修改。
@@ -286,14 +230,15 @@ enum CodexQuotaQuery {
         guard !cancellation.isCancelled else { return .failure(.cancelled) }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = ["app-server"]
+        // 旧版跟随 CLI 的账号也限定文件存储，禁止 CLI 间接触发钥匙串授权。
+        process.arguments = ["app-server", "-c", "cli_auth_credentials_store=\"file\""]
         if let isolatedHome {
             var environment = ProcessInfo.processInfo.environment
             environment["CODEX_HOME"] = isolatedHome.path
             environment.removeValue(forKey: "OPENAI_API_KEY")
             environment.removeValue(forKey: "CODEX_API_KEY")
             process.environment = environment
-            process.arguments! += ["-c", "cli_auth_credentials_store=\"file\"", "-c", "analytics.enabled=false"]
+            process.arguments! += ["-c", "analytics.enabled=false"]
         }
         process.currentDirectoryURL = isolatedHome ?? FileManager.default.homeDirectoryForCurrentUser
         let input = Pipe(), output = Pipe()

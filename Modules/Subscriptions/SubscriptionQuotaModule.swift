@@ -39,7 +39,7 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
     private var verifyingAccountID: String?
 
     init(settings: SettingsStore = .shared, clients: SubscriptionQuotaClients = .live,
-         secrets: SubscriptionSecretStore = SubscriptionKeychain()) {
+         secrets: SubscriptionSecretStore = SubscriptionFileSecretStore()) {
         preferences = settings.modulePreferences(for: Self.descriptor.id, default: SubscriptionQuotaPreferences())
         self.clients = clients
         self.secrets = secrets
@@ -195,11 +195,11 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
                                     try self.secrets.saveCodexAuth(data, accountID: id)
                                 }
                                 completion(response.quota)
-                            } catch { completion(.failure(.keychain)) }
+                            } catch { completion(.failure(.credentialStorage)) }
                         }
                     }
                 }
-            } catch { completion(.failure(.keychain)) }
+            } catch { completion(.failure(.credentialStorage)) }
         }
     }
 
@@ -213,12 +213,12 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
                 settingsMessage = "请输入有效的 GLM Coding Plan 密钥。"; return false
             }
             do { try secrets.saveGLMKey(key, accountID: account.id) }
-            catch { settingsMessage = SubscriptionQuotaError.keychain.message(for: .glm); return false }
+            catch { settingsMessage = SubscriptionQuotaError.credentialStorage.message(for: .glm); return false }
             invalidate(account.id)
         }
         guard storeAccount(account) else { return false }
         configure()
-        settingsMessage = "GLM 账号已保存，密钥独立保存在本机钥匙串。"
+        settingsMessage = "GLM 账号已保存，密钥已加密保存在应用 Data 目录。"
         return true
     }
 
@@ -261,7 +261,7 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
                     }
                     do { try self.secrets.saveCodexAuth(data, accountID: account.id) }
                     catch {
-                        self.settingsMessage = SubscriptionQuotaError.keychain.message(for: .codex)
+                        self.settingsMessage = SubscriptionQuotaError.credentialStorage.message(for: .codex)
                         completion(false); return
                     }
                     var next = account
@@ -295,7 +295,7 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
             preferences.update { $0.accounts.removeAll { $0.id == id } }
             configure()
             settingsMessage = "账号与本软件保存的凭据已移除，原始登录文件保持不变。"
-        } catch { settingsMessage = SubscriptionQuotaError.keychain.message(for: account.provider) }
+        } catch { settingsMessage = SubscriptionQuotaError.credentialStorage.message(for: account.provider) }
     }
 
     func clearSettingsMessage() { settingsMessage = nil }

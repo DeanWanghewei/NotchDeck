@@ -12,9 +12,17 @@
 
 删除账号会移除本软件保存的对应凭据，其他账号与原始 auth.json 不受影响。在市场中移除整个插件则只停止运行并保留配置和凭据，重新添加可恢复。
 
+## 本地加密存储与旧版升级
+
+凭据目录为 `~/Library/Application Support/NotchDeck/Data/SubscriptionCredentials/`。GLM 密钥与 Codex 登录按账号分别使用 CryptoKit 的 AES-256-GCM 加密，随机 nonce，认证附加数据绑定服务、账号 id 和格式版本，防止串用或篡改。目录权限为 0700，密钥、密文及锁文件为 0600；写入通过同目录临时文件原子替换，删除账号仅移除对应密文。
+
+随机生成的 256 位主密钥保存为该目录中的 `master-key-v1`，不硬编码，不使用钥匙串，也不要求用户输入额外密码。这能避免凭据明文落盘，但能同时读取密钥与密文的同用户程序仍可解密；它不提供钥匙串的独立访问控制。备份和恢复需包含整个目录，不能只复制密文；主密钥损坏或丢失时会报错，不自动重建覆盖旧数据。
+
+升级后保留旧账号与别名，**不自动读取、迁移或删除旧钥匙串条目**，避免授权弹窗。请编辑各账号，重新填写 GLM 密钥或选择 auth.json 并验证保存一次。旧条目可由用户在系统“钥匙串访问”中自行清理。新保存、刷新和删除账号均只操作上述应用目录。
+
 ## GLM Coding Plan
 
-添加账号时填写 Coding Plan 密钥，可选别名。每个密钥独立保存在本机钥匙串 `com.notchdeck.app.subscription-quota` 服务下，不写入 UserDefaults、日志或命令参数。编辑已有账号时，新密钥留空表示保留原密钥；替换时只取消该账号查询并清除其旧快照。
+添加账号时填写 Coding Plan 密钥，可选别名。每个密钥独立加密保存在应用 Data 目录，不写入 UserDefaults、日志或命令参数。编辑已有账号时，新密钥留空表示保留原密钥；替换时只取消该账号查询并清除其旧快照。
 
 采用智谱官方 [glm-plan-usage 插件](https://github.com/zai-org/zai-coding-plugins/tree/main/plugins/glm-plan-usage) 的只读接口 `GET https://open.bigmodel.cn/api/monitor/usage/quota/limit`。固定中国区主机，禁用重定向与 Cookie，响应上限 256 KiB、最长 15 秒，不调用模型推理。
 
@@ -29,19 +37,19 @@
 1. 后台读取指定文件，校验 JSON 和 ChatGPT token 基本结构，上限 256 KiB。
 2. 将登录放入权限为 0700 的独立临时 `CODEX_HOME`，auth.json 权限为 0600；强制使用 `cli_auth_credentials_store="file"`，避免回退到当前 CLI 登录或其他账号的钥匙串。临时环境不复制原目录的配置。
 3. 用临时 `codex app-server` 完成握手，查询 `account/rateLimits/read`。不创建聊天，不执行工具或调用模型；CLI 自身可能在初始化时读取官方模型/插件目录。
-4. **额度验证成功后**，才把该账号登录保存到 NotchDeck 的独立钥匙串项目，账号元数据另行持久化。失败或取消不会添加账号或替换已保存的登录。
-5. 后续从钥匙串恢复登录，在隔离环境中查询；CLI 刷新后的 token 保存回同一账号，临时目录随后删除。
+4. **额度验证成功后**，才把该账号登录保存到 NotchDeck 的独立加密文件，账号元数据另行持久化。失败或取消不会添加账号或替换已保存的登录。
+5. 后续从本地加密文件恢复登录，在隔离环境中查询；CLI 刷新后的 token 保存回同一账号，临时目录随后删除。
 
 因此，切换 Codex 当前账号、移动或删除导入文件、重启 NotchDeck，都不会改变已保存的账号。源文件不被修改，也不需要持续存在。重新导入新文件可以更新某个账号的登录；登录被撤销或过期且无法刷新时，会提示重新导入。网页登录的官方用量页可能使用另一账号，需要自行核对。
 
 组件自动查找 Homebrew、`/usr/local/bin`、`~/.local/bin`、Codex.app / ChatGPT.app 常见 CLI 路径，也可填写可执行文件路径，路径不作为 shell 命令解析。旧版跟随本机 CLI 登录的账号会保留并标记；编辑它并导入 auth.json 后才固定为独立保存的账号。
 
-凭据存储依据 [OpenAI 官方 Authentication 文档](https://developers.openai.com/codex/auth/)，额度协议见 [App Server 文档](https://developers.openai.com/codex/app-server/)。面板优先使用 `rateLimitsByLimitId.codex`，兼容旧版 `rateLimits`；周期来自 `windowDurationMins`，重置来自 `resetsAt`，不混入独立模型或代码审查限额。
+Codex 登录文件格式参考 [OpenAI 官方 Authentication 文档](https://developers.openai.com/codex/auth/)，额度协议见 [App Server 文档](https://developers.openai.com/codex/app-server/)。面板优先使用 `rateLimitsByLimitId.codex`，兼容旧版 `rateLimits`；周期来自 `windowDurationMins`，重置来自 `resetsAt`，不混入独立模型或代码审查限额。
 
 ## 刷新、迁移与验证边界
 
 - 启用后每 5 分钟刷新；展开面板时距上次查询至少 60 秒才补刷新，也可手动刷新。最多同时查询三个账号，每个账号不重叠，单账号错误不阻断其他账号。
 - 停用、移除、更换凭据或切换模式会取消相应任务，旧回调不能覆盖新账号。失败保留该账号上次成功的数值及时间；首次失败不虚构 0%。
 - CLI 查询硬超时 12 秒，输出限制 256 KiB，结束或取消后回收子进程和临时凭据目录。
-- 旧版 GLM / Codex 开关自动迁移为账号；GLM 继续使用原钥匙串项目，迁移过程不读取凭据。新账号凭据按 id 隔离，UserDefaults 仅保存别名、启用状态和登录是否已导入等元数据。
+- 旧版 GLM / Codex 开关自动迁移为账号；账号与别名继续保留，迁移过程不读取旧钥匙串；旧版凭据需要重新填写 GLM 密钥或导入 Codex 登录一次。新账号凭据按 id 隔离，UserDefaults 仅保存别名、启用状态和登录是否已导入等元数据。
 - 解析、隔离目录、原文件不变、删除源文件后恢复查询、token 轮换、多账号并发、别名与旧配置迁移均有固定数据或模拟 CLI 测试。测试不使用真实账号；目前尚未使用有效 GLM 密钥或 ChatGPT 订阅登录核验端到端实时数值。

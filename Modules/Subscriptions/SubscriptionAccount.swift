@@ -45,7 +45,7 @@ struct SubscriptionQuotaPreferences: Codable, Equatable {
             var ids = Set<String>()
             accounts = saved.filter { !$0.id.isEmpty && ids.insert($0.id).inserted }
         } else {
-            // 固定旧账号 id 对应旧钥匙串项目，迁移配置不需要读取或复制凭据。
+            // 固定旧账号 id 保留设置关联；配置迁移不读取旧凭据，用户重新保存后转为加密文件。
             if try values.decodeIfPresent(Bool.self, forKey: .glmEnabled) == true {
                 accounts.append(SubscriptionAccount(id: SubscriptionAccount.legacyGLMID, provider: .glm))
             }

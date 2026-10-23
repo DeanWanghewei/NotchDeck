@@ -58,7 +58,7 @@ struct SubscriptionQuotaSettingsView: View {
                         .onSubmit { applyCodexPath() }
                     Button("应用路径") { applyCodexPath() }
                 }
-                Text("导入 auth.json 时先验证登录与额度接口，成功后按账号保存到本机钥匙串。后续查询不依赖原文件或 Codex 当前登录，token 刷新结果也会保存。")
+                Text("导入 auth.json 时先验证登录与额度接口，成功后按账号加密保存到应用 Data 目录。后续查询不依赖原文件或 Codex 当前登录，token 刷新结果也会保存。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("刷新") {
@@ -121,7 +121,7 @@ struct SubscriptionAccountEditor: View {
             if provider == .glm {
                 SecureField(original == nil ? "Coding Plan 密钥" : "新密钥（留空保留已有密钥）", text: $glmKey)
                     .textFieldStyle(.roundedBorder)
-                Text("每个账号的密钥独立保存在本机钥匙串，仅用于官方只读额度接口。")
+                Text("密钥按账号加密保存在应用 Data 目录，不访问钥匙串。旧版账号请重新填写密钥或导入登录。")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 HStack {

@@ -83,6 +83,9 @@ final class SubscriptionQuotaTests: XCTestCase {
 
     func testCodexTransportCompletesHandshakeAndReadsOnlyQuotaResponse() throws {
         let executable = try script(#"""
+        [ "$1" = "app-server" ] || exit 6
+        [ "$2" = "-c" ] || exit 6
+        [ "$3" = 'cli_auth_credentials_store="file"' ] || exit 6
         IFS= read -r request
         printf '%s\n' '{"id":1,"result":{}}'
         IFS= read -r initialized
@@ -136,9 +139,6 @@ final class SubscriptionQuotaTests: XCTestCase {
         XCTAssertEqual(value.accounts.map(\.provider), [.glm, .codex])
         XCTAssertFalse(value.accounts[1].codexAuthStored)
         XCTAssertEqual(try JSONDecoder().decode(SubscriptionQuotaPreferences.self, from: JSONEncoder().encode(value)), value)
-        XCTAssertEqual(SubscriptionKeychain.itemName(provider: .glm, accountID: value.accounts[0].id), "glm-coding-plan")
-        XCTAssertNotEqual(SubscriptionKeychain.itemName(provider: .glm, accountID: "one"), SubscriptionKeychain.itemName(provider: .glm, accountID: "two"))
-        XCTAssertNotEqual(SubscriptionKeychain.itemName(provider: .glm, accountID: "one"), SubscriptionKeychain.itemName(provider: .codex, accountID: "one"))
     }
 
     func testOptionalAliasesAndDuplicateNamesDoNotChangeAccountIdentity() throws {
@@ -446,7 +446,7 @@ final class SubscriptionQuotaTests: XCTestCase {
     }
 
     @MainActor
-    func testCodexKeychainSaveFailureDoesNotReportSuccessfulImport() {
+    func testCodexStorageSaveFailureDoesNotReportSuccessfulImport() {
         withFixture { settings, secrets, client in
             let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
             module.preferences.update { $0.codexExecutable = "/usr/bin/true" }
@@ -512,7 +512,7 @@ private final class QuotaTestSecrets: SubscriptionSecretStore {
     func removeGLMKey(accountID: String) throws { keys.removeValue(forKey: accountID) }
     func readCodexAuth(accountID: String) throws -> Data? { readCount += 1; return auth[accountID] }
     func saveCodexAuth(_ data: Data, accountID: String) throws {
-        if failCodexSave { throw SubscriptionQuotaError.keychain }
+        if failCodexSave { throw SubscriptionQuotaError.credentialStorage }
         auth[accountID] = data
     }
     func removeCodexAuth(accountID: String) throws { auth.removeValue(forKey: accountID) }
