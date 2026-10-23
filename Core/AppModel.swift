@@ -3,46 +3,43 @@ import Foundation
 
 /// 全局可观察状态与模块注册表
 final class AppModel: ObservableObject {
-    static let shared = AppModel()
+    static let shared = AppModel(settings: .shared, modules: BuiltInModules.make(settings: .shared),
+                                 plugins: MarketplacePlugins.implementations)
 
     static let openSettingsRequest = Notification.Name("NotchDeckOpenSettings")
     static let quitRequest = Notification.Name("NotchDeckQuit")
-    /// 面板展开完成，模块可借此刷新数据（如自定义子项）
-    static let panelDidExpand = Notification.Name("NotchDeckPanelDidExpand")
-
     @Published var isExpanded = false {
         didSet {
-            if isExpanded && !oldValue {
-                NotificationCenter.default.post(name: Self.panelDidExpand, object: nil)
-            }
+            if isExpanded != oldValue { registry.setPanelExpanded(isExpanded) }
         }
     }
     /// 当前选中的标签页模块
     @Published var activeTabID: String?
 
-    let registry = ModuleRegistry()
-    let settings = SettingsStore.shared
-
-    // 内置模块
-    let media = MediaModule()
-    let system = SystemMonitor()
-    let node = NodeProcessScanner()
-    let volume = VolumeModule()
-    let custom = CustomItemsModule()
-    let apps = AppLauncherModule()
+    let registry: ModuleRegistry
+    let settings: SettingsStore
+    let marketplace: PluginMarketplace
 
     private var cancellables: Set<AnyCancellable> = []
+    private var isRunning = true
 
-    private init() {
-        registry.register(media)
-        registry.register(volume)
-        registry.register(apps)
-        registry.register(system)
-        registry.register(node)
-        registry.register(custom)
+    /// 可注入组件与偏好域，测试和预览不必启动内置采集器或读取用户媒体配置。
+    init(settings: SettingsStore, modules: [ModuleBox], plugins: [PluginImplementation] = [],
+         catalog: PluginCatalog? = nil, appVersion: String = PluginMarketplace.applicationVersion,
+         catalogFetch: @escaping PluginCatalogFetch = { PluginCatalogClient.fetch(completion: $0) }) {
+        self.settings = settings
+        let registry = ModuleRegistry()
+        self.registry = registry
+        modules.forEach { registry.register($0) }
+        marketplace = PluginMarketplace(settings: settings, registry: registry, implementations: plugins,
+                                        bundledCatalog: catalog, appVersion: appVersion, fetch: catalogFetch)
 
         registry.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        registry.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateModules() }
             .store(in: &cancellables)
         settings.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
@@ -56,15 +53,19 @@ final class AppModel: ObservableObject {
     }
 
     private func updateModules() {
-        let customWasActive = registry.boxes.first(where: { $0.id == custom.id })?.isActive == true
+        guard isRunning else { return }
         registry.updateActivity(settings: settings)
-        if isExpanded, !customWasActive,
-           registry.boxes.first(where: { $0.id == custom.id })?.isActive == true {
-            custom.refresh()
-        }
         if !tabModules.contains(where: { $0.id == activeTabID }) {
-            activeTabID = tabModules.first?.id
+            let next = tabModules.first?.id
+            if activeTabID != next { activeTabID = next }
         }
+    }
+
+    func shutdown() {
+        isRunning = false
+        marketplace.shutdown()
+        cancellables.removeAll()
+        registry.stopAll()
     }
 
     // MARK: - 布局计算
@@ -76,19 +77,25 @@ final class AppModel: ObservableObject {
 
     /// 常驻顶部且可用的模块
     var pinnedModules: [ModuleBox] {
-        effectiveModules(pinned: true)
+        modules(at: .top)
     }
 
     /// 底部标签页切换的模块
     var tabModules: [ModuleBox] {
-        effectiveModules(pinned: false)
+        modules(at: .tab)
     }
 
-    private func effectiveModules(pinned: Bool) -> [ModuleBox] {
+    var bottomModules: [ModuleBox] { modules(at: .bottom) }
+
+    func presentationContext(for box: ModuleBox) -> ModulePresentationContext {
+        box.descriptor.presentationContext(for: settings.config(for: box.id, default: box.descriptor.defaultConfig))
+    }
+
+    private func modules(at placement: ModulePlacement) -> [ModuleBox] {
         sortedByDisplayOrder(registry.boxes.filter { box in
             guard box.isAvailable() else { return false }
-            let config = settings.config(for: box.id)
-            return config.enabled && config.pinned == pinned
+            let config = settings.config(for: box.id, default: box.descriptor.defaultConfig)
+            return config.enabled && presentationContext(for: box).placement == placement
         })
     }
 

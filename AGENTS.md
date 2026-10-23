@@ -9,6 +9,9 @@ NotchDeck 是 macOS 刘海信息岛（灵动岛）应用：SwiftUI + 无边框 N
 | `README.md` | 产品文档：功能、权限模型、构建与验证命令 |
 | `docs/design-conventions.md` | **项目约束**：颜色与数据展示规范（详见下） |
 | `docs/custom-items.md` | 自定义命令小部件的用户文档（写法与规则） |
+| `docs/module-development.md` | 内置 Swift 组件接入：描述、生命周期、独立设置与配置、测试要求 |
+| `docs/subscription-quotas.md` | GLM Coding Plan / ChatGPT · Codex 订阅额度配置、凭据与接口边界 |
+| `marketplace/README.md` | 插件市场目录、GitHub 维护与随应用分发约定 |
 | `docs/macos-notes.md` | 平台实证笔记：各 macOS 版本的窗口/Space/电源陷阱与探针结论（开发参考，README 只留摘要） |
 | `docs/PROJECT_REVIEW.md` | 一次性项目检查与修复记录（2026-09-13，历史存档，不随开发更新） |
 
@@ -27,6 +30,7 @@ NotchDeck 是 macOS 刘海信息岛（灵动岛）应用：SwiftUI + 无边框 N
 ## 关键实现锚点
 
 - 模块框架：`Core/ModuleFramework.swift`（`NotchModule` 协议 + 注册表，start/stop 生命周期）
+- 插件布局：`Core/ModulePresentation.swift`（可用区域/样式声明、默认值与用户覆盖、视图环境上下文）
 - 面板布局：`Core/PanelLayout.swift`（520 × 580 上限、接壤轮廓、与硬件刘海对齐）
 - 系统采样：`Modules/System/SystemMonitor.swift`（后台串行队列、1s、差分基线在 `reset()` 重建）
 - 悬停明细交互：`UI/SystemMonitorView.swift`（hover 展开 + 点击固定，离开整体区域才收起）

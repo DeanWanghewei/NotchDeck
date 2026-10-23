@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NotificationCenter.default.addObserver(self, selector: #selector(handleHotKeyChange),
                                                name: SettingsStore.hotKeyDidChange, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(openSettings),
+        NotificationCenter.default.addObserver(self, selector: #selector(handleOpenSettings(_:)),
                                                name: AppModel.openSettingsRequest, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(quitApp),
                                                name: AppModel.quitRequest, object: nil)
@@ -95,6 +95,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        mouseTracker.stop()
+        appModel.shutdown()
+    }
+
     private func togglePanel() {
         windowController.toggle()
     }
@@ -144,7 +149,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showSettingsWindow()
     }
 
-    private func showSettingsWindow() {
+    @objc private func handleOpenSettings(_ notification: Notification) {
+        showSettingsWindow(moduleID: notification.object as? String)
+    }
+
+    private func showSettingsWindow(moduleID: String? = nil) {
         if settingsWindow == nil {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 720, height: 560),
@@ -156,9 +165,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.level = .floating
             // 全屏应用所在 Space 也能呼出
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            window.minSize = NSSize(width: 560, height: 460)
+            window.minSize = NSSize(width: 640, height: 460)
             window.contentView = NSHostingView(rootView: SettingsView())
             settingsWindow = window
+        }
+        if let moduleID {
+            let page = SettingsPage.resolve(moduleID, boxes: appModel.registry.boxes)
+            settingsWindow?.contentView = NSHostingView(rootView: SettingsView(app: appModel, page: page))
         }
         settingsWindow?.center()
         NSApp.activate(ignoringOtherApps: true)

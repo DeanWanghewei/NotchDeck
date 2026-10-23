@@ -55,6 +55,7 @@ struct VolumeUsage: Equatable, Identifiable {
 /// （host_processor_info + vm_statistics64 + NSFileManager 卷枚举 + sysctl NET_RT_IFLIST2
 ///  + IOKit 电源注册表 + IOPS 电源源估算）
 final class SystemMonitor: ObservableObject {
+    private let settings: SettingsStore
     @Published private(set) var stats = SystemStats()
     /// GPU 使用率需要 IOReport 私有框架，macOS 15+ 已对用户态移除（探针实证），当前恒为不可用
     static let gpuAvailable = false
@@ -66,6 +67,8 @@ final class SystemMonitor: ObservableObject {
     private let sampler = SystemSampler()
     private var generation = 0
     private var sampling = false
+
+    init(settings: SettingsStore = .shared) { self.settings = settings }
 
     func start() {
         guard timer == nil else { return }
@@ -350,11 +353,11 @@ enum ThermalPressure {
 // MARK: - 面板模块接入
 
 extension SystemMonitor: NotchModule {
-    var id: String { "system" }
-    var title: String { "系统监控" }
-    var systemImage: String { "chart.pie" }
+    static let descriptor = ModuleDescriptor(id: "system", title: "系统监控", systemImage: "chart.pie",
+        summary: "查看 CPU、内存、磁盘、电池与网络")
 
     func content() -> some View {
-        SystemMonitorView(monitor: self)
+        SystemMonitorView(monitor: self, settings: settings)
     }
+    func settingsContent() -> some View { SystemModuleSettingsView(settings: settings) }
 }

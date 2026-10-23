@@ -2,7 +2,7 @@
 
 自定义子项 = **一条 zsh 命令 + 一种展示方式（文本 / 热力图）**。
 
-添加入口：**设置 → 自定义 → 添加子项**（手写命令），或从同页的**示例模板**一键添加后改成自己的参数。示例模板的机器可读定义在 `Core/ModuleFramework.swift` 的 `CustomItemPresets`，与本文档一一对应。
+添加入口：**设置 → 自定义 → 添加子项**（手写命令），或从同页的**示例模板**一键添加后改成自己的参数。示例模板的机器可读定义在 `Modules/Custom/CustomItem.swift` 的 `CustomItemPresets`，与本文档一一对应。
 
 ## 规则速查
 
@@ -91,7 +91,7 @@ TOKEN=$(curl -s -X POST https://api.example.com/login -d 'user=USER&pass=PASS' |
 
 ## 给 AI Agent / 贡献者
 
-- 示例模板（产品内的写法引导）定义在 `Core/ModuleFramework.swift` → `CustomItemPresets.all`，修改示例请同步更新本文档。
+- 示例模板（产品内的写法引导）定义在 `Modules/Custom/CustomItem.swift` → `CustomItemPresets.all`，修改示例请同步更新本文档。
 - 解析与采样逻辑在 `Modules/Custom/CustomItemsModule.swift`：`numbers(in:limit:)` 负责取数，`CustomHeatmapSample` 以 `value == nil` 表示失败样本，30 秒轮询即 `defaultPollInterval`。
 - 渲染在 `UI/CustomItemsView.swift` → `CustomHeatmapView`：绿色按 `levelIndex` 分 5 档，失败为红色；`format(_:)` 按量级选小数位。
 - 想新增展示方式（如仪表盘、进度条）：在 `CustomItem.Display` 加 case，模块里产出该形态的数据，视图里加对应渲染分支；旧数据靠 `CustomItem.init(from:)` 的 `decodeIfPresent` 回退保持兼容。

@@ -4,7 +4,7 @@ import SwiftUI
 /// 已安装应用选择器：搜索、白名单"已适配"标记、点击添加/移除
 struct AppPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject var settings = SettingsStore.shared
 
     @State private var installed: [InstalledApps.InstalledApp] = []
     @State private var searchText = ""

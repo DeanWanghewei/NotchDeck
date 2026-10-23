@@ -3,7 +3,7 @@ import SwiftUI
 /// 应用快捷控制：图标、运行状态、启动/退出，白名单应用带"已适配"标记
 struct AppLauncherView: View {
     @ObservedObject var module: AppLauncherModule
-    @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject var settings = SettingsStore.shared
 
     var body: some View {
         VStack(spacing: 8) {

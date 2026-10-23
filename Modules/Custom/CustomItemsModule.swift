@@ -18,9 +18,8 @@ final class CustomItemsModule: ObservableObject, NotchModule {
         }
     }
 
-    let id = "custom"
-    let title = "自定义"
-    let systemImage = "curlybraces.square"
+    static let descriptor = ModuleDescriptor(id: "custom", title: "自定义", systemImage: "curlybraces.square",
+        summary: "运行命令小部件，以文本或热力图展示")
 
     @Published private(set) var outputs: [String: String] = [:]
     /// 热力图子项的数值序列：命令一次输出多个数值时整体替换；只输出单个数值时按刷新累积为趋势
@@ -41,7 +40,6 @@ final class CustomItemsModule: ObservableObject, NotchModule {
     private let pollInterval: TimeInterval
     private let queue = DispatchQueue(label: "com.notchdeck.custom", qos: .utility)
     private var cancellables: Set<AnyCancellable> = []
-    private var observer: NSObjectProtocol?
     private var pollTimer: Timer?
     private var cancellation: Shell.Cancellation?
     private var generation = 0
@@ -56,11 +54,11 @@ final class CustomItemsModule: ObservableObject, NotchModule {
     }
 
     var isAvailable: Bool { !settings.customItems.isEmpty }
+    var unavailableReason: String? { isAvailable ? nil : "未添加子项" }
 
     deinit {
         cancellation?.cancel()
         pollTimer?.invalidate()
-        if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 
     func start() {
@@ -77,12 +75,6 @@ final class CustomItemsModule: ObservableObject, NotchModule {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.trimSamples() }
             .store(in: &cancellables)
-        observer = NotificationCenter.default.addObserver(
-            forName: AppModel.panelDidExpand, object: nil, queue: .main) { [weak self] _ in
-            // 面板在执行期间反复展开不重复执行同一批命令。
-            guard let self, !self.isRunning else { return }
-            self.refresh()
-        }
         // 监控类热力图子项（如网络探测）在后台持续采样，面板关闭时趋势也能累积
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             guard let self, self.active, !self.isRunning,
@@ -101,15 +93,19 @@ final class CustomItemsModule: ObservableObject, NotchModule {
         cancellables.removeAll()
         pollTimer?.invalidate()
         pollTimer = nil
-        if let observer { NotificationCenter.default.removeObserver(observer) }
-        observer = nil
         outputs = [:]
         samples = [:]
         sampleCommands = [:]
         unparsedHeatmapIDs = []
     }
 
-    func content() -> some View { CustomItemsView(module: self) }
+    func content() -> some View { CustomItemsView(module: self, settings: settings) }
+    func settingsContent() -> some View { CustomModuleSettingsView(settings: settings) }
+
+    func panelDidExpand() {
+        // 面板在执行期间反复展开不重复执行同一批命令。
+        if !isRunning { refresh() }
+    }
 
     func refresh() {
         guard active, settings.config(for: id).enabled else { return }

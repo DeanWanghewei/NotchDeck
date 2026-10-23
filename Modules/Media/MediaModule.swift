@@ -23,9 +23,8 @@ struct MediaTrack: Decodable {
 
 /// 每次只允许一个媒体查询，脚本在有超时的子进程中执行，状态只在主队列更新。
 final class MediaModule: ObservableObject, NotchModule {
-    let id = "media"
-    let title = "媒体"
-    let systemImage = "waveform"
+    static let descriptor = ModuleDescriptor(id: "media", title: "媒体", systemImage: "waveform",
+        summary: "按需添加媒体源，查看曲目并控制播放", defaultConfig: ModuleConfig(enabled: true, pinned: true))
 
     struct MediaSource {
         let name: String
@@ -49,10 +48,10 @@ final class MediaModule: ObservableObject, NotchModule {
     @Published private(set) var experimentalAvailable = true
     /// 当前曲目是否来自实验性系统级检测（决定控制指令的走向）
     private(set) var trackViaAdapter = false
-    private let settings = SettingsStore.shared
+    private let settings: SettingsStore
     private let scriptQueue = DispatchQueue(label: "com.notchdeck.media", qos: .utility)
     private var pollTimer: Timer?
-    private var settingsSubscription: AnyCancellable?
+    private var settingsSubscriptions: Set<AnyCancellable> = []
     private var cancellation: Shell.Cancellation?
     private var artworkTask: URLSessionDataTask?
     private var artworkCancellation: Shell.Cancellation?
@@ -67,6 +66,8 @@ final class MediaModule: ObservableObject, NotchModule {
     private var streamStartedAt = Date.distantPast
     private var streamRestartAttempts = 0
 
+    init(settings: SettingsStore = .shared) { self.settings = settings }
+
     deinit {
         pollTimer?.invalidate()
         cancellation?.cancel()
@@ -79,8 +80,9 @@ final class MediaModule: ObservableObject, NotchModule {
     func start() {
         guard !active else { return }
         active = true
-        settingsSubscription = settings.$mediaSources.dropFirst().receive(on: DispatchQueue.main)
+        settings.$mediaSources.dropFirst().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.requestRefresh() }
+            .store(in: &settingsSubscriptions)
         settings.$experimentalNowPlaying.dropFirst().receive(on: DispatchQueue.main)
             .sink { [weak self] enabled in
                 guard let self else { return }
@@ -91,6 +93,7 @@ final class MediaModule: ObservableObject, NotchModule {
                 }
                 self.requestRefresh()
             }
+            .store(in: &settingsSubscriptions)
         if settings.experimentalNowPlaying { startStreamIfNeeded() }
         refresh()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -104,11 +107,12 @@ final class MediaModule: ObservableObject, NotchModule {
         stopStream()
         pollTimer?.invalidate()
         pollTimer = nil
-        settingsSubscription = nil
+        settingsSubscriptions.removeAll()
         track = nil
     }
 
     func content() -> some View { MediaView(module: self) }
+    func settingsContent() -> some View { MediaModuleSettingsView(module: self, settings: settings) }
     var noSourceConfigured: Bool { enabledSources.isEmpty }
     /// 实验性系统级检测是否处于开启状态（决定空态的呈现）
     var experimentalActive: Bool { settings.experimentalNowPlaying }

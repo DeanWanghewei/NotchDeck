@@ -4,9 +4,8 @@ import SwiftUI
 
 /// 使用 CoreAudio 读写默认输出设备，不执行 AppleScript。
 final class VolumeModule: ObservableObject, NotchModule {
-    let id = "volume"
-    let title = "音量"
-    let systemImage = "speaker.wave.2.fill"
+    static let descriptor = ModuleDescriptor(id: "volume", title: "音量", systemImage: "speaker.wave.2.fill",
+        summary: "调节系统音量与静音", defaultConfig: ModuleConfig(enabled: true, pinned: true))
 
     @Published private(set) var volume: Double = 0
     @Published private(set) var muted = false

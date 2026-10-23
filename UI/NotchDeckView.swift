@@ -20,7 +20,7 @@ struct NotchDeckView: View {
     }
 }
 
-// MARK: - 面板主体（常驻区 + 标签页区）
+// MARK: - 面板主体（顶部常驻 + 标签页 + 底部常驻）
 
 private struct PanelRoot: View {
     @EnvironmentObject private var app: AppModel
@@ -74,6 +74,7 @@ private struct PanelRoot: View {
     private var card: some View {
         let pinned = app.pinnedModules
         let tabs = app.tabModules
+        let bottom = app.bottomModules
 
         return VStack(spacing: 14) {
             ScrollView(.vertical) {
@@ -83,8 +84,8 @@ private struct PanelRoot: View {
                         VStack(spacing: 14) {
                             ForEach(pinned) { box in
                                 VStack(alignment: .leading, spacing: 8) {
-                                    sectionHeader(box)
-                                    box.makeContent()
+                                    if box.descriptor.presentation.showsSectionHeader { sectionHeader(box) }
+                                    box.content(in: app.presentationContext(for: box))
                                 }
                             }
                         }
@@ -96,10 +97,17 @@ private struct PanelRoot: View {
                         tabContent(in: tabs)
                             .id(selectedTabID(in: tabs))
                     } else if tabs.count == 1 {
-                        tabs[0].makeContent()
+                        tabs[0].content(in: app.presentationContext(for: tabs[0]))
                     }
 
-                    if pinned.isEmpty && tabs.isEmpty {
+                    ForEach(bottom) { box in
+                        VStack(alignment: .leading, spacing: 8) {
+                            if box.descriptor.presentation.showsSectionHeader { sectionHeader(box) }
+                            box.content(in: app.presentationContext(for: box))
+                        }
+                    }
+
+                    if pinned.isEmpty && tabs.isEmpty && bottom.isEmpty {
                         emptyHint
                     }
                 }
@@ -143,7 +151,7 @@ private struct PanelRoot: View {
     @ViewBuilder
     private func tabContent(in tabs: [ModuleBox]) -> some View {
         if let selected = tabs.first(where: { $0.id == selectedTabID(in: tabs) }) {
-            selected.makeContent()
+            selected.content(in: app.presentationContext(for: selected))
                 .transition(reduceMotion ? .opacity : .tabSwitch)
         }
     }
@@ -167,11 +175,11 @@ private struct PanelRoot: View {
 // MARK: - 底栏
 
 private struct PanelFooter: View {
-    @ObservedObject private var settings = SettingsStore.shared
+    @EnvironmentObject private var app: AppModel
 
     private var hotKeyHint: String {
-        let display = HotKeyManager.display(keyCode: settings.hotKeyCode,
-                                            carbonModifiers: settings.hotKeyModifiers)
+        let display = HotKeyManager.display(keyCode: app.settings.hotKeyCode,
+                                            carbonModifiers: app.settings.hotKeyModifiers)
         return "\(display) 呼出面板"
     }
 

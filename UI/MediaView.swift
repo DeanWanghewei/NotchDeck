@@ -66,7 +66,7 @@ struct MediaView: View {
             }
             Spacer()
             Button {
-                NotificationCenter.default.post(name: AppModel.openSettingsRequest, object: nil)
+                NotificationCenter.default.post(name: AppModel.openSettingsRequest, object: module.id)
             } label: {
                 Text("去添加")
                     .font(.caption.weight(.medium))

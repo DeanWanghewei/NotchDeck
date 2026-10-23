@@ -2,7 +2,7 @@
 
 把 MacBook Pro 的刘海变成一个随手可用的信息控制台。
 
-鼠标悬停刘海即展开**悬浮岛屿面板**，内容模块化组织：顶部**常驻区** + 底部**标签页区**，支持媒体控制、系统监控、Node 进程管理、音量控制与用户自定义命令小部件。悬停检测仅读取鼠标坐标，**不需要辅助功能或输入监控权限**。
+鼠标悬停刘海即展开**悬浮岛屿面板**，内容分为**顶部常驻 / 标签页 / 底部常驻**，支持媒体控制、系统监控、Node 进程管理、音量控制、用户自定义命令小部件、本地时钟，并可通过**插件市场**添加 AI 订阅额度。悬停检测仅读取鼠标坐标，**不需要辅助功能或输入监控权限**。
 
 ## 效果预览
 
@@ -42,48 +42,67 @@
 - 悬停刘海自动展开（默认 0.2s 延迟，可调 0.1~0.5s）；鼠标离开自动收起（默认 0.5s 延迟，可调 0.3~2s）
 - 全局快捷键 `⌘⇧I`（可自定义录制）、菜单栏图标兜底（右键菜单含设置/退出）
 - 悬浮岛屿样式：四角大圆角卡片悬浮于菜单栏下方，**不覆盖、不加宽刘海**；窗口最大 520 × 580pt，内容统一滚动，底栏保持可见
-- 上下两层布局：常驻区（空则不占位）+ 标签页区（多模块图标切换）
+- 顶部常驻 → 标签页 → 底部常驻，空区域不占位，内容统一滚动；应用底栏始终可见。插件声明支持的区域、默认位置和展示样式，用户可覆盖选择，同一区域内可排序
 - macOS 26+ 悬浮面板使用系统 Liquid Glass（需 Xcode 26+ 构建），旧系统保留毛玻璃；跟随浅色/深色、减少透明度、增强对比度与减弱动态效果设置
 - 接壤模式按屏幕安全区与刘海对齐；换屏、切换空间或唤醒后同步刷新窗口与轮廓，无刘海屏自动使用悬浮卡片
+- 设置使用侧栏导航，组件设置自动注册；各模块在自己的页面配置，新增组件不挤占顶部标签栏
+- 插件市场：设置内浏览、添加与移除可选插件，目录/说明/版本由 GitHub 仓库维护；随应用提供离线目录，手动刷新成功后缓存，失败保留当前目录。新插件实现随应用更新，已有配置在移除后保留
 - 全屏与 Space 切换后按面板自身窗口 ID 核验可见性；丢失时自动重挂恢复，收起会取消旧重试，恢复失败仍可再次悬停或按快捷键唤起
 
-### 模块（可在设置中开启/关闭、配置常驻或切换、上下箭头调整前后顺序）
+### 模块（可在设置中开启/关闭、选择区域和展示样式、上下箭头调整区域内顺序）
 | 模块 | 说明 |
 |---|---|
 | 媒体 | 封面/标题/进度/播放控制。媒体源由用户在设置中添加（Music / Spotify），**添加哪个才请求哪个的授权**，未安装的源不会出现在列表中 |
 | 应用 | 用户从**已安装应用选择器**中挑选常用 App 添加到面板：一键启动/退出、运行状态，白名单应用带"已适配"标记（当前适配 Music、Spotify）。零权限（NSWorkspace 实现） |
 | 音量 | 系统音量滑杆 + 静音切换，无需权限 |
-| 系统监控 | CPU、内存、磁盘卡片 + **悬停卡片展开明细（点击可固定）**：CPU **每核占用**（核心名 + 用量条 + 百分比，冷→暖配色：低负载冷蓝、高负载暖红；性能/能效核标注、最忙核心、用户态/系统态拆分、负载）、内存**构成明细**（App 内存/联动/已压缩/已缓存/交换 swap）、磁盘**各挂载卷用量** + **CPU 近 15 分钟热力图** + **交换内存（swap）** + **电池**（电量/剩余时间与充满估算/循环次数及设计上限；容量/健康度/电压电流功率悬停查看详情）+ **热压力警示**（系统过热降速时提示，温度的公开 API 等价物）+ 网络速率，每秒刷新；各区块显示可在设置 → 监控 中开关。GPU 与风扇因当前 macOS 移除用户态统计接口（IOReport 框架已删、SMC 协议已变，macOS 26 与 27.2 两轮探针实证）暂不可用，面板自动隐藏；实现零第三方依赖 |
+| 系统监控 | CPU、内存、磁盘卡片 + **悬停卡片展开明细（点击可固定）**：CPU **每核占用**（核心名 + 用量条 + 百分比，冷→暖配色：低负载冷蓝、高负载暖红；性能/能效核标注、最忙核心、用户态/系统态拆分、负载）、内存**构成明细**（App 内存/联动/已压缩/已缓存/交换 swap）、磁盘**各挂载卷用量** + **CPU 近 15 分钟热力图** + **交换内存（swap）** + **电池**（电量/剩余时间与充满估算/循环次数及设计上限；容量/健康度/电压电流功率悬停查看详情）+ **热压力警示**（系统过热降速时提示，温度的公开 API 等价物）+ 网络速率，每秒刷新；各区块显示可在设置 → 系统监控 中开关。GPU 与风扇因当前 macOS 移除用户态统计接口（IOReport 框架已删、SMC 协议已变，macOS 26 与 27.2 两轮探针实证）暂不可用，面板自动隐藏；实现零第三方依赖 |
 | 进程监控 | **零配置**列出当前用户所有监听 TCP 端口的进程（系统守护进程除外）：App 名/脚本名智能展示、PID/CPU/内存、一键 SIGTERM、退出自动移除 |
+| 时钟 | 本地时间、日期与时区，跟随系统时间格式；秒数和时区显示可配置。默认关闭，在模块管理中启用，无需权限 |
+| 订阅额度（市场插件） | **GLM Coding Plan / ChatGPT · Codex** 套餐用量：已用与剩余百分比、服务返回的周期和重置时间、官方用量页入口。在**设置 → 插件市场 → 添加插件**后启用，先显示明确标注的离线演示；可放在顶部常驻、标签页或底部常驻，选择**用量卡片 / 紧凑列表**，紧凑模式保留数字和冷暖用量条，重置说明可悬停查看。真实查询需连接账号，每 5 分钟刷新。GLM 密钥保存在钥匙串，Codex 复用本机 CLI 的 ChatGPT 登录。配置和接口边界见 [docs/subscription-quotas.md](docs/subscription-quotas.md) |
 | 自定义 | 用户添加 shell 命令小部件，两种展示方式：**文本**（输出原样显示）与**热力图**（输出数字按大小着色、单行时间线，命令失败/超时显示红色方格，每 30 秒后台探测，保留时长 1~24 小时可配置）。设置页内置**示例模板**一键添加（本机 IP、服务响应速度探测、磁盘占用、CPU 前几名、先登录再取数等），完整写法见 [docs/custom-items.md](docs/custom-items.md) |
 
 ### 已适配白名单
-`Core/ModuleFramework.swift` 中的 `AdaptedApps.whitelist` 记录已深度适配的 App（bundleID → 能力说明）。用户在选择器或设置中看到这些应用时，会显示"已适配"徽章，表示 NotchDeck 为其提供超出启动/退出的集成能力（如媒体播放控制）。扩展适配只需在白名单加一行并实现对应集成逻辑。
+`Modules/Apps/PanelApp.swift` 中的 `AdaptedApps.whitelist` 记录已深度适配的 App（bundleID → 能力说明）。用户在选择器或设置中看到这些应用时，会显示"已适配"徽章，表示 NotchDeck 为其提供超出启动/退出的集成能力（如媒体播放控制）。扩展适配只需在白名单加一行并实现对应集成逻辑。
 
 ### 权限模型（默认最小权限）
 - 全新安装启动：**不发起任何 AppleScript、不申请任何权限**，面板完整可用（监控/Node/音量/应用/自定义/交互）
 - 媒体模块默认显示"未添加媒体源"引导；用户在设置中开启某个源后，**该 App 运行后首次读取才触发自动化授权弹窗**，由 macOS 管理授权，拒绝也只影响该源
 - 应用快捷控制走 `NSWorkspace` / `NSRunningApplication`，启动/退出用户自己的应用**无需任何权限**
 - 悬停检测仅读取鼠标坐标（`NSEvent.mouseLocation`），无需辅助功能/输入监控权限
+- 订阅额度默认未添加，演示模式不联网、不读取凭据；用户连接后才访问对应服务。GLM 只读取本组件保存的钥匙串项目，Codex 使用其 CLI 自身登录，不读取浏览器 Cookie
+- 插件市场启动和打开时不联网；点击“刷新目录”仅向 GitHub 请求公开 JSON，无账号或凭据上传
+
+### 插件市场与 GitHub
+
+在设置侧栏打开 **插件市场**，可添加订阅额度、查看使用说明与源码；已添加插件可打开设置或移除。添加会启用插件，位置和展示样式可在模块管理或插件设置的“布局与展示”中选择。移除停止运行并保留配置；需要清除 GLM 密钥时在插件设置中单独删除。
+
+市场目录保存在本仓库 [`marketplace/catalog.json`](marketplace/catalog.json)，通过 GitHub PR 管理。随应用附带目录，离线可用；“刷新目录”读取 main 分支并缓存到本机。当前采用随应用编译的 Swift 插件，介绍可独立更新，新实现与插件升级通过更新 NotchDeck 获取。未知或不兼容的目录版本会提示获取新版，不会加载远端代码。完整维护流程见 [marketplace/README.md](marketplace/README.md)。
 
 ## 模块框架
 
-面板是一个模块化框架（`Core/ModuleFramework.swift`）：
+组件通过 `Core/ModuleFramework.swift` 的协议接入；默认组件由 `Modules/BuiltInModules.swift` 装配，可选插件由 `Modules/MarketplacePlugins.swift` 提供工厂：
 
 ```swift
 protocol NotchModule: ObservableObject {
-    var id: String { get }          // 持久化配置 key
-    var title: String { get }       // 名称
-    var systemImage: String { get } // SF Symbol 图标
-    var isAvailable: Bool { get }   // 不可用时不出现在面板与设置
-    func start()                   // 启用时开始采集/订阅
-    func stop()                    // 关闭时停止采集并取消任务
+    static var descriptor: ModuleDescriptor { get } // 稳定 id、名称、图标、说明与默认布局
+    var isAvailable: Bool { get }
+    var unavailableReason: String? { get }
+    func start()
+    func stop()
+    func panelDidExpand()
+    func panelDidCollapse()
     associatedtype Content: View
-    func content() -> Content       // 面板内容
+    func content() -> Content
+    associatedtype SettingsContent: View = EmptyView
+    func settingsContent() -> SettingsContent
 }
 ```
 
-实现协议并 `registry.register(module)` 即可获得：设置中的开关与位置配置（常驻/切换）、布局与动画、滚动容器和生命周期管理。内置六个模块全部走这套协议；"自定义子项"模块是用户扩展的第一入口，后续可基于此加载更丰富的外部插件。
+实现组件并在装配清单加入 `ModuleBox(YourModule(...))`，即可获得模块管理、区域/样式选择、排序与生命周期管理。`ModuleDescriptor.presentation` 声明可用区域、样式列表和宿主标题显示；视图通过 `@Environment(\.modulePresentation)` 读取用户选择后的区域和样式，用 SwiftUI 定义卡片、列表、曲线等内容。提供 `settingsContent()` 后，宿主会自动生成独立设置入口和布局设置。可用性、面板事件与无设置页的默认实现均由协议提供，不需要修改 `AppModel` 或设置页分支。
+
+组件专属配置通过 `settings.modulePreferences(for:default:)` 保存 Codable 值，按组件 id 隔离；旧版内置配置继续兼容原来的存储键。注册表支持去重、移除与统一停止，停用或退出应用时释放轮询和订阅。新增的**时钟**组件使用这条完整链路，默认关闭，可独立设置秒数和时区显示。
+
+插件市场使用同一注册表完成添加、移除与生命周期管理；安装列表与组件配置分别持久化，旧版订阅额度配置自动迁移。第三方可通过 PR 贡献 Swift 插件，审核后随应用发布。完整接入示例、目录约定与测试要求见 [docs/module-development.md](docs/module-development.md)。
 
 ## 环境要求
 
@@ -97,7 +116,7 @@ protocol NotchModule: ObservableObject {
 
 当前验证环境为 macOS 26.6.2（25G83）、Xcode 26.6 / macOS 26.5 SDK；系统监控的电池/热压力增强与 49 项回归测试在 macOS 27.2（26B5091g）上通过。**macOS 27 尚未全面实机验证**，不能据此宣称已全面兼容；升级后需复核浅色/深色、两种面板样式、全屏空间、外接屏切换及辅助功能外观。实验性系统正在播放仍按独立的媒体兼容状态显示，不将展示适配视为私有媒体接口已验证。各 macOS 版本的探针实证与窗口/电源等平台陷阱记录见 `docs/macos-notes.md`（v0.19.3 修复的 Space 搁浅问题亦在其中）。
 
-v0.19.4 全屏恢复补修的 Debug 构建及 62 项回归测试通过（其中 10 项为屏幕布局测试、9 项为窗口可见性与异步恢复测试）。`cacheDisplay` 不能可靠还原系统玻璃材质，完整玻璃效果及辅助功能外观仍需人工复核。
+当前组件化改造、订阅额度与插件市场的 Debug 构建及 114 项回归测试通过（其中 14 项为组件框架测试、9 项为插件区域/样式/旧配置迁移与排序测试、13 项为订阅额度测试、16 项为插件市场目录/兼容性/安装/迁移/网络与缓存测试、10 项为屏幕布局测试、9 项为窗口可见性与异步恢复测试）。订阅额度及市场完成深浅色实际视图自渲染检查，覆盖添加前后、移除、最小窗口、三个区域、卡片/紧凑样式和错误/需更新状态。`cacheDisplay` 不能可靠还原系统玻璃材质，完整玻璃效果及辅助功能外观仍需人工复核。
 
 macOS 27.2（26B118）上另用独立全屏测试应用验证了两轮进入/退出全屏：全屏内首次唤起、切回桌面、再次进入全屏与主动收起均正常。原始多事件叠加的偶发链路尚未受控复现，探针与修复细节见 [docs/macos-notes.md](docs/macos-notes.md)。
 
@@ -127,7 +146,10 @@ NotchDeck/
 │   ├── NotchDeckApp.swift         # 入口（SwiftUI App + AppDelegate 适配器）
 │   └── AppDelegate.swift          # 初始化窗口、菜单栏、快捷键、设置窗口
 ├── Core/
-│   ├── ModuleFramework.swift      # NotchModule 协议 + 注册表（面板框架核心）
+│   ├── ModuleFramework.swift      # 组件描述 + NotchModule 协议 + 注册表
+│   ├── ModulePreferences.swift    # 按组件 id 隔离的 Codable 配置
+│   ├── ModulePresentation.swift   # 区域与样式声明、用户覆盖、视图上下文
+│   ├── Plugins/                  # 市场目录、兼容检查、缓存与插件生命周期
 │   ├── AppModel.swift             # 单例聚合根：状态 + 模块 + 布局计算
 │   ├── NotchWindowController.swift# 悬浮岛屿 NSPanel：状态机 + 屏幕定位
 │   ├── PanelVisibilityRecovery.swift # 自身窗口可见性核验 + 可取消的 Space 恢复
@@ -136,14 +158,19 @@ NotchDeck/
 │   ├── SettingsStore.swift        # UserDefaults 封装（含模块配置）
 │   └── Shell.swift                # 外部命令执行（带超时）
 ├── Modules/
+│   ├── BuiltInModules.swift       # 内置组件装配清单
+│   ├── MarketplacePlugins.swift   # 市场插件工厂与实现版本
+│   ├── Clock/                     # 本地时钟 + 专属显示配置
+│   ├── Subscriptions/             # GLM / Codex 订阅额度与独立凭据存储
 │   ├── Media/                     # 媒体：源注册表 + JXA / AppleScript（按需授权）
 │   ├── Apps/                      # 应用快捷控制 + 已安装应用扫描
 │   ├── Volume/                    # 音量：CoreAudio 默认输出设备
 │   ├── System/                    # 系统监控：Mach 统计 / sysctl 64 位网络计数 / IOPS 电池估算
 │   ├── Node/                      # Node 进程：lsof / ps / kill(SIGTERM)
 │   └── Custom/                    # 自定义命令小部件
-├── UI/                            # SwiftUI 视图（面板 / 标签栏 / 各模块 / 设置）
-├── docs/                          # design-conventions.md（颜色与数据展示项目约束）· custom-items.md · PROJECT_REVIEW.md
+├── UI/                            # SwiftUI 视图（Settings/ 下按组件拆分设置页）
+├── marketplace/                   # GitHub 维护的插件目录与贡献约定
+├── docs/                          # 设计约束、命令小部件、组件开发、订阅额度与平台实证笔记
 └── Resources/Assets.xcassets
 ```
 
@@ -166,7 +193,7 @@ xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck \
   -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
 ```
 
-`NotchDeckTests` 是无宿主逻辑测试，不启动 NotchDeck 主程序；设置写入临时 UserDefaults suite，媒体脚本使用模拟应用，不请求播放器授权。覆盖命令硬超时/取消/输出上限、模块生命周期、快捷键持久化、媒体元数据、系统采样（含每核占用差分/内存构成/挂载卷排序的原生断言与纯函数用例）、电池时间估算/循环上限/电压电流格式化、热压力标签与当前用户 TCP 监听扫描，以及刘海/无刘海、菜单栏自动隐藏、侧边 Dock、窄屏、负坐标多屏和悬停热区边界等布局场景。窗口恢复另覆盖其他窗口不能冒充面板可见、全屏过渡后丢失、重试上限、收起取消与旧回调失效。
+`NotchDeckTests` 是无宿主逻辑测试，不启动 NotchDeck 主程序；设置写入临时 UserDefaults suite，媒体脚本使用模拟应用，不请求播放器授权。覆盖命令硬超时/取消/输出上限、组件默认值/配置隔离/生命周期/动态增删/设置导航、快捷键持久化、媒体元数据、系统采样（含每核占用差分/内存构成/挂载卷排序的原生断言与纯函数用例）、电池时间估算/循环上限/电压电流格式化、热压力标签与当前用户 TCP 监听扫描，以及刘海/无刘海、菜单栏自动隐藏、侧边 Dock、窄屏、负坐标多屏和悬停热区边界等布局场景。窗口恢复另覆盖其他窗口不能冒充面板可见、全屏过渡后丢失、重试上限、收起取消与旧回调失效。
 
 自定义命令每条最多执行 6 秒，超时或取消时结束本次命令的进程组；标准输出和错误输出各保留最多 256 KiB，并区分成功无输出、非零退出码与超时。模块关闭后不再执行命令，变更配置会取消旧任务并丢弃过期结果。热力图子项每 30 秒后台探测一次；命令写法案例与规则见 [docs/custom-items.md](docs/custom-items.md)。
 

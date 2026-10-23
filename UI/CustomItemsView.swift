@@ -3,7 +3,7 @@ import SwiftUI
 /// 自定义子项：执行用户定义的 shell 命令，按子项选择的展示方式渲染输出
 struct CustomItemsView: View {
     @ObservedObject var module: CustomItemsModule
-    @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject var settings = SettingsStore.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

@@ -12,13 +12,14 @@ enum StatDetailKind: Equatable {
 /// / 热压力警示 + 网络速率
 struct SystemMonitorView: View {
     @ObservedObject var monitor: SystemMonitor
-    @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject private var settings: SettingsStore
     @State private var hoveredKind: StatDetailKind?
     @State private var pinnedKind: StatDetailKind?
 
     /// initialPinnedDetail 仅供显示 QA / 预览注入初始固定状态，正常路径保持 nil
-    init(monitor: SystemMonitor, initialPinnedDetail: StatDetailKind? = nil) {
+    init(monitor: SystemMonitor, settings: SettingsStore = .shared, initialPinnedDetail: StatDetailKind? = nil) {
         self.monitor = monitor
+        self.settings = settings
         _pinnedKind = State(initialValue: initialPinnedDetail)
     }
 

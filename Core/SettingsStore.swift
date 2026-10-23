@@ -5,8 +5,44 @@ import Foundation
 /// 单个模块的面板布局配置
 struct ModuleConfig: Codable, Equatable {
     var enabled: Bool
-    /// true = 常驻顶部；false = 底部标签页切换
-    var pinned: Bool
+    var placement: ModulePlacement
+    var displayModeID: String?
+
+    /// 保留旧组件的配置写法；新组件直接使用 placement。
+    var pinned: Bool {
+        get { placement == .top }
+        set { placement = newValue ? .top : .tab }
+    }
+
+    init(enabled: Bool, pinned: Bool) {
+        self.init(enabled: enabled, placement: pinned ? .top : .tab)
+    }
+
+    init(enabled: Bool, placement: ModulePlacement, displayModeID: String? = nil) {
+        self.enabled = enabled
+        self.placement = placement
+        self.displayModeID = displayModeID
+    }
+
+    private enum CodingKeys: String, CodingKey { case enabled, pinned, placement, displayModeID }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try values.decode(Bool.self, forKey: .enabled)
+        let legacyPinned = (try? values.decode(Bool.self, forKey: .pinned)) ?? false
+        // 未知区域按旧布局兜底，不让单个插件的新字段破坏整份模块配置。
+        placement = (try? values.decode(ModulePlacement.self, forKey: .placement)) ?? (legacyPinned ? .top : .tab)
+        displayModeID = try? values.decode(String.self, forKey: .displayModeID)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(enabled, forKey: .enabled)
+        try values.encode(placement, forKey: .placement)
+        try values.encodeIfPresent(displayModeID, forKey: .displayModeID)
+        // 回退应用版本后，底部常驻仍能作为常驻内容展示。
+        try values.encode(placement != .tab, forKey: .pinned)
+    }
 }
 
 /// UserDefaults 封装的设置存储（需求 2.5 + 模块管理）
@@ -45,6 +81,13 @@ final class SettingsStore: ObservableObject {
     /// 模块显示顺序（moduleId 列表，用户在设置中调整）；未记录的模块按注册顺序附加在后
     @Published var moduleOrder: [String] {
         didSet { defaults.set(moduleOrder, forKey: Keys.moduleOrder) }
+    }
+    @Published private(set) var installedPluginIDs: [String] {
+        didSet { defaults.set(installedPluginIDs, forKey: Keys.installedPluginIDs) }
+    }
+    var cachedPluginCatalog: Data? {
+        get { defaults.data(forKey: Keys.pluginCatalogCache) }
+        set { defaults.set(newValue, forKey: Keys.pluginCatalogCache) }
     }
     /// 用户自定义子项
     @Published var customItems: [CustomItem] {
@@ -124,6 +167,8 @@ final class SettingsStore: ObservableObject {
         static let hotKeyModifiers = "settings.hotKeyModifiers"
         static let moduleConfigs = "settings.moduleConfigs"
         static let moduleOrder = "settings.moduleOrder"
+        static let installedPluginIDs = "marketplace.installedPluginIDs"
+        static let pluginCatalogCache = "marketplace.catalogCache"
         static let customItems = "settings.customItems"
         static let heatmapRetentionHours = "settings.heatmapRetentionHours"
         static let mediaSources = "settings.mediaSources"
@@ -138,16 +183,6 @@ final class SettingsStore: ObservableObject {
         static let experimentalNowPlaying = "settings.experimentalNowPlaying"
         static let notchAttached = "settings.notchAttached"
     }
-
-    /// 各模块的默认布局
-    static let moduleConfigDefaults: [String: ModuleConfig] = [
-        "media": ModuleConfig(enabled: true, pinned: true),
-        "volume": ModuleConfig(enabled: true, pinned: true),
-        "apps": ModuleConfig(enabled: true, pinned: false),
-        "system": ModuleConfig(enabled: true, pinned: false),
-        "node": ModuleConfig(enabled: true, pinned: false),
-        "custom": ModuleConfig(enabled: true, pinned: false),
-    ]
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -165,6 +200,7 @@ final class SettingsStore: ObservableObject {
 
         moduleConfigs = Self.decode([String: ModuleConfig].self, forKey: Keys.moduleConfigs, defaults: defaults) ?? [:]
         moduleOrder = defaults.stringArray(forKey: Keys.moduleOrder) ?? []
+        installedPluginIDs = defaults.stringArray(forKey: Keys.installedPluginIDs) ?? []
         customItems = Self.decode([CustomItem].self, forKey: Keys.customItems, defaults: defaults) ?? []
         // 兼容历史/异常值：夹到 0.5~24 小时
         heatmapRetentionHours = min(24, max(0.5, defaults.object(forKey: Keys.heatmapRetentionHours) as? Double ?? 2))
@@ -183,12 +219,31 @@ final class SettingsStore: ObservableObject {
 
     // MARK: - 模块配置
 
-    func config(for id: String) -> ModuleConfig {
-        moduleConfigs[id] ?? Self.moduleConfigDefaults[id] ?? ModuleConfig(enabled: true, pinned: false)
+    /// 首次引入市场时保留已有插件设置；明确移除后的空列表不会再次触发迁移。
+    func migratePluginInstallations(legacyIDs: [String]) {
+        guard defaults.object(forKey: Keys.installedPluginIDs) == nil else { return }
+        installedPluginIDs = legacyIDs.filter {
+            moduleConfigs[$0] != nil || defaults.object(forKey: "modules.preferences.\($0)") != nil
+        }
     }
 
-    func updateConfig(for id: String, mutate: (inout ModuleConfig) -> Void) {
-        var config = self.config(for: id)
+    func setPluginInstalled(_ id: String, installed: Bool) {
+        if installed {
+            if !installedPluginIDs.contains(id) { installedPluginIDs.append(id) }
+        } else { installedPluginIDs.removeAll { $0 == id } }
+    }
+
+    func modulePreferences<Value: Codable & Equatable>(for id: String, default defaultValue: Value) -> ModulePreferences<Value> {
+        ModulePreferences(moduleID: id, defaultValue: defaultValue, defaults: defaults)
+    }
+
+    func config(for id: String, default defaultConfig: ModuleConfig = ModuleConfig(enabled: true, pinned: false)) -> ModuleConfig {
+        moduleConfigs[id] ?? defaultConfig
+    }
+
+    func updateConfig(for id: String, default defaultConfig: ModuleConfig = ModuleConfig(enabled: true, pinned: false),
+                      mutate: (inout ModuleConfig) -> Void) {
+        var config = self.config(for: id, default: defaultConfig)
         mutate(&config)
         var configs = moduleConfigs
         configs[id] = config
@@ -209,12 +264,15 @@ final class SettingsStore: ObservableObject {
         return ordered
     }
 
-    /// 相对移动一位（offset -1 上移 / +1 下移），越界时不写入
-    func moveModule(_ id: String, offset: Int, registryIDs: [String]) {
+    /// 只交换目标区域内的相邻项，其他区域的相对顺序不受影响。
+    func moveModule(_ id: String, offset: Int, registryIDs: [String], within groupIDs: [String]? = nil) {
         var ordered = effectiveModuleOrder(registryIDs: registryIDs)
-        guard let index = ordered.firstIndex(of: id),
-              ordered.indices.contains(index + offset) else { return }
-        ordered.swapAt(index, index + offset)
+        let group = groupIDs.map(Set.init)
+        let candidates = ordered.filter { group?.contains($0) ?? true }
+        guard let index = candidates.firstIndex(of: id), candidates.indices.contains(index + offset),
+              let source = ordered.firstIndex(of: id),
+              let target = ordered.firstIndex(of: candidates[index + offset]) else { return }
+        ordered.swapAt(source, target)
         moduleOrder = ordered
     }
 

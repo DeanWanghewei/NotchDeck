@@ -4,7 +4,7 @@ import SwiftUI
 /// 可按 App 进程 / 脚本进程过滤；由面板统一滚动
 struct NodeListView: View {
     @ObservedObject var scanner: NodeProcessScanner
-    @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject var settings = SettingsStore.shared
     @State private var terminationError: String?
 
     private var filtered: [NodeProcessInfo] {

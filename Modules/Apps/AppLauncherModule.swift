@@ -57,26 +57,24 @@ enum InstalledApps {
 /// 面板内一键启动/退出并显示运行状态；白名单应用带"已适配"标记。
 /// 全部通过 NSWorkspace / NSRunningApplication 实现，零权限。
 final class AppLauncherModule: ObservableObject, NotchModule {
-    let id = "apps"
-    let title = "应用"
-    let systemImage = "square.grid.2x2"
+    static let descriptor = ModuleDescriptor(id: "apps", title: "应用", systemImage: "square.grid.2x2",
+        summary: "管理常用应用，快速启动或退出")
 
     @Published private(set) var runningBundleIDs: Set<String> = []
 
-    private let settings = SettingsStore.shared
+    private let settings: SettingsStore
     private var workspaceObservers: [NSObjectProtocol] = []
-    private var panelObserver: NSObjectProtocol?
+
+    init(settings: SettingsStore = .shared) { self.settings = settings }
 
     deinit {
         workspaceObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
-        if let panelObserver {
-            NotificationCenter.default.removeObserver(panelObserver)
-        }
     }
 
     var isAvailable: Bool {
         !settings.panelApps.isEmpty
     }
+    var unavailableReason: String? { isAvailable ? nil : "未添加应用" }
 
     func start() {
         guard workspaceObservers.isEmpty else { return }
@@ -90,24 +88,19 @@ final class AppLauncherModule: ObservableObject, NotchModule {
                 self?.refreshRunning()
             })
         }
-        panelObserver = NotificationCenter.default.addObserver(
-            forName: AppModel.panelDidExpand, object: nil, queue: .main) { [weak self] _ in
-            self?.refreshRunning()
-        }
     }
 
     func stop() {
         workspaceObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         workspaceObservers.removeAll()
-        if let panelObserver {
-            NotificationCenter.default.removeObserver(panelObserver)
-        }
-        panelObserver = nil
     }
 
+    func panelDidExpand() { refreshRunning() }
+
     func content() -> some View {
-        AppLauncherView(module: self)
+        AppLauncherView(module: self, settings: settings)
     }
+    func settingsContent() -> some View { AppModuleSettingsView(settings: settings) }
 
     // MARK: - 状态与操作
 

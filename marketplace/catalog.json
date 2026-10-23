@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "plugins": [
+    {
+      "id": "subscriptions",
+      "name": "订阅额度",
+      "summary": "GLM Coding Plan · ChatGPT / Codex",
+      "details": "在信息岛查看套餐已用与剩余额度、重置时间。支持 GLM Coding Plan 和 ChatGPT 订阅关联的 Codex 额度，添加后先展示离线演示，随时连接自己的账号。",
+      "systemImage": "chart.bar.xaxis",
+      "author": "NotchDeck",
+      "version": "1.0.0",
+      "minimumAppVersion": "0.20.0",
+      "capabilities": [
+        "顶部常驻、标签页或底部常驻，卡片与紧凑列表可选",
+        "离线演示，无需账号即可体验",
+        "GLM 密钥保存在本机钥匙串",
+        "Codex 复用本机 CLI 的 ChatGPT 登录",
+        "连接后每 5 分钟刷新，支持手动刷新"
+      ],
+      "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/docs/subscription-quotas.md",
+      "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Subscriptions"
+    }
+  ]
+}

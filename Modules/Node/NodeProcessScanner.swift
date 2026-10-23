@@ -20,6 +20,7 @@ struct NodeProcessInfo: Identifiable, Equatable {
 /// 监听端口进程扫描：零配置，默认列出当前用户所有监听 TCP 端口的非系统进程。
 /// lsof 找 PID/端口，ps 取可执行文件/命令行/资源占用，每 2 秒刷新。
 final class NodeProcessScanner: ObservableObject {
+    private let settings: SettingsStore
     @Published private(set) var processes: [NodeProcessInfo] = []
 
     private var timer: Timer?
@@ -27,6 +28,8 @@ final class NodeProcessScanner: ObservableObject {
     private var generation = 0
     private var cancellation: Shell.Cancellation?
     private let scanQueue = DispatchQueue(label: "com.notchdeck.nodescanner", qos: .utility)
+
+    init(settings: SettingsStore = .shared) { self.settings = settings }
 
     func start() {
         guard timer == nil else { return }
@@ -215,11 +218,11 @@ private extension Array {
 }
 
 extension NodeProcessScanner: NotchModule {
-    var id: String { "node" }
-    var title: String { "进程监控" }
-    var systemImage: String { "terminal" }
+    static let descriptor = ModuleDescriptor(id: "node", title: "进程监控", systemImage: "terminal",
+        summary: "查看当前用户的监听端口与进程")
 
     func content() -> some View {
-        NodeListView(scanner: self)
+        NodeListView(scanner: self, settings: settings)
     }
+    func settingsContent() -> some View { ProcessModuleSettingsView(settings: settings) }
 }

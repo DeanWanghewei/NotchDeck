@@ -383,9 +383,7 @@ final class SettingsAndLifecycleTests: XCTestCase {
 }
 
 private final class LifecycleModule: ObservableObject, NotchModule {
-    let id = "fixture"
-    let title = "fixture"
-    let systemImage = "circle"
+    static let descriptor = ModuleDescriptor(id: "fixture", title: "fixture", systemImage: "circle", summary: "测试组件")
     var isAvailable = true
     var starts = 0
     var stops = 0
