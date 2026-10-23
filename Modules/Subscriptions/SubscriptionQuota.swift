@@ -4,10 +4,7 @@ enum SubscriptionProvider: String, Codable, CaseIterable, Identifiable {
     case glm, codex
     var id: String { rawValue }
     var title: String { self == .glm ? "GLM Coding Plan" : "ChatGPT · Codex" }
-    var usageURL: URL {
-        URL(string: self == .glm ? "https://www.bigmodel.cn/coding-plan/personal/usage" :
-            "https://chatgpt.com/codex/settings/usage")!
-    }
+
 }
 
 struct SubscriptionQuotaWindow: Equatable, Identifiable {
@@ -24,14 +21,7 @@ struct SubscriptionQuotaSnapshot: Equatable {
     let windows: [SubscriptionQuotaWindow]
     let fetchedAt: Date
 
-    static func demo(for provider: SubscriptionProvider, now: Date = Date()) -> Self {
-        Self(plan: provider == .glm ? "Pro · 示例" : "Plus · 示例", windows: [
-            SubscriptionQuotaWindow(id: "short", title: "5 小时", usedPercent: provider == .glm ? 32 : 68,
-                resetsAt: now.addingTimeInterval(2 * 3600 + 40 * 60)),
-            SubscriptionQuotaWindow(id: "weekly", title: "每周", usedPercent: provider == .glm ? 57 : 24,
-                resetsAt: now.addingTimeInterval(3 * 86400 + 3600)),
-        ], fetchedAt: now)
-    }
+
 }
 
 enum SubscriptionQuotaError: Error, Equatable {

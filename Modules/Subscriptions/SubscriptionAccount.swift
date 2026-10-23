@@ -18,28 +18,26 @@ struct SubscriptionAccount: Codable, Equatable, Identifiable {
         return "\(provider == .glm ? "GLM" : "Codex") 账号 \(number)"
     }
 
-    static let demoAccounts: [Self] = [
-        Self(id: "demo-glm-personal", provider: .glm, alias: "个人"),
-        Self(id: "demo-glm-work", provider: .glm, alias: "工作"),
-        Self(id: "demo-codex-personal", provider: .codex, alias: "个人"),
-        Self(id: "demo-codex-work", provider: .codex),
-    ]
+
 }
 
 struct SubscriptionQuotaPreferences: Codable, Equatable {
-    var demoMode = true
+    var notificationsEnabled = false
+    var notificationThreshold = 100
+    var effectiveNotificationThreshold: Int { min(100, max(1, notificationThreshold)) }
     var codexExecutable = ""
     var accounts: [SubscriptionAccount] = []
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case demoMode, codexExecutable, accounts, glmEnabled, codexEnabled
+        case notificationsEnabled, notificationThreshold, codexExecutable, accounts, glmEnabled, codexEnabled
     }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        demoMode = try values.decodeIfPresent(Bool.self, forKey: .demoMode) ?? true
+        notificationsEnabled = try values.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? false
+        notificationThreshold = min(100, max(1, try values.decodeIfPresent(Int.self, forKey: .notificationThreshold) ?? 100))
         codexExecutable = try values.decodeIfPresent(String.self, forKey: .codexExecutable) ?? ""
         if let saved = try values.decodeIfPresent([SubscriptionAccount].self, forKey: .accounts) {
             var ids = Set<String>()
@@ -57,7 +55,8 @@ struct SubscriptionQuotaPreferences: Codable, Equatable {
 
     func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
-        try values.encode(demoMode, forKey: .demoMode)
+        try values.encode(notificationsEnabled, forKey: .notificationsEnabled)
+        try values.encode(effectiveNotificationThreshold, forKey: .notificationThreshold)
         try values.encode(codexExecutable, forKey: .codexExecutable)
         try values.encode(accounts, forKey: .accounts)
     }

@@ -9,9 +9,11 @@ struct SubscriptionQuotaSettingsView: View {
 
     var body: some View {
         Group {
-            Section("预览") {
-                Toggle("演示模式（不连接已保存账号）", isOn: preferences.binding(for: \.demoMode))
-                Text("演示使用离线示例。添加账号后关闭演示模式，即可显示真实额度。")
+            Section("额度提醒") {
+                NotificationPermissionToggle("启用额度消息提醒", isOn: preferences.binding(for: \.notificationsEnabled))
+                Stepper("已用达到 \(preferences.value.effectiveNotificationThreshold)% 时提醒",
+                        value: preferences.binding(for: \.notificationThreshold), in: 1...100)
+                Text("按账号和额度周期分别提醒；同一周期只提醒一次。通知显示受系统通知设置与专注模式影响。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("账号") {
@@ -66,7 +68,7 @@ struct SubscriptionQuotaSettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("立即刷新") { module.refresh() }
-                        .disabled(!module.active || preferences.value.demoMode || !module.refreshing.isEmpty)
+                        .disabled(!module.active || !module.refreshing.isEmpty)
                 }
                 if let error = preferences.saveError { Text(error).font(.caption).foregroundStyle(.red) }
             }

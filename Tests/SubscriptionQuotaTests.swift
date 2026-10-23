@@ -1,5 +1,7 @@
 import Foundation
 import XCTest
+import SwiftUI
+import AppKit
 
 final class SubscriptionQuotaTests: XCTestCase {
     func testCodexUsesMainBucketAndServerDurationsWithoutMixingModelQuotas() throws {
@@ -246,16 +248,16 @@ final class SubscriptionQuotaTests: XCTestCase {
     }
 
     @MainActor
-    func testDefaultDemoAndDisabledLifecycleNeverTouchCredentialsOrNetwork() {
+    func testEmptyAndDisabledLifecycleNeverTouchCredentialsOrNetwork() {
         withFixture { settings, secrets, client in
             let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
             module.refresh()
             XCTAssertTrue(module.snapshots.isEmpty)
             module.start()
             module.start()
-            XCTAssertEqual(module.snapshots.count, 4)
-            XCTAssertEqual(module.displayedAccounts.filter { $0.provider == .glm }.count, 2)
-            XCTAssertEqual(module.displayedAccounts.filter { $0.provider == .codex }.count, 2)
+            XCTAssertTrue(module.snapshots.isEmpty)
+            XCTAssertEqual(module.displayedAccounts.filter { $0.provider == .glm }.count, 0)
+            XCTAssertEqual(module.displayedAccounts.filter { $0.provider == .codex }.count, 0)
             XCTAssertEqual(secrets.readCount, 0)
             XCTAssertEqual(client.count, 0)
             module.stop()
@@ -270,7 +272,7 @@ final class SubscriptionQuotaTests: XCTestCase {
             let glm = [SubscriptionAccount(provider: .glm), SubscriptionAccount(provider: .glm)]
             let codex = [SubscriptionAccount(provider: .codex), SubscriptionAccount(provider: .codex)]
             secrets.keys = [glm[0].id: "test-first-key", glm[1].id: "test-second-key"]
-            module.preferences.update { $0.demoMode = false; $0.accounts = glm + codex; $0.codexExecutable = "/usr/bin/true" }
+            module.preferences.update { $0.accounts = glm + codex; $0.codexExecutable = "/usr/bin/true" }
             module.start()
             defer { module.stop() }
             XCTAssertEqual(client.glm.map(\.key), ["test-first-key", "test-second-key"])
@@ -278,11 +280,11 @@ final class SubscriptionQuotaTests: XCTestCase {
             XCTAssertEqual(module.refreshing.count, 4)
             module.refresh()
             XCTAssertEqual(client.count, 3)
-            client.glm[0].completion(.success(.demo(for: .glm)))
+            client.glm[0].completion(.success(.fixture(for: .glm)))
             settle()
             XCTAssertEqual(client.codex.count, 2)
             client.glm[1].completion(.failure(.signInRequired))
-            client.codex[0].completion(CodexQuotaResult(quota: .success(.demo(for: .codex))))
+            client.codex[0].completion(CodexQuotaResult(quota: .success(.fixture(for: .codex))))
             settle()
             XCTAssertNotNil(module.snapshots[glm[0].id])
             XCTAssertNotNil(module.snapshots[codex[0].id])
@@ -296,14 +298,14 @@ final class SubscriptionQuotaTests: XCTestCase {
         withFixture { settings, secrets, client in
             let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
             let account = SubscriptionAccount(provider: .codex)
-            module.preferences.update { $0.demoMode = false; $0.accounts = [account]; $0.codexExecutable = "/usr/bin/true" }
+            module.preferences.update { $0.accounts = [account]; $0.codexExecutable = "/usr/bin/true" }
             module.start()
             defer { module.stop() }
             module.preferences.update { $0.accounts[0].alias = "工作" }
             settle()
             XCTAssertEqual(client.count, 1)
             XCTAssertFalse(client.codex[0].request.isCancelled)
-            let snapshot = SubscriptionQuotaSnapshot.demo(for: .codex)
+            let snapshot = SubscriptionQuotaSnapshot.fixture(for: .codex)
             client.codex[0].completion(CodexQuotaResult(quota: .success(snapshot)))
             settle()
             module.refresh()
@@ -321,7 +323,7 @@ final class SubscriptionQuotaTests: XCTestCase {
             let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
             let accounts = [SubscriptionAccount(provider: .glm), SubscriptionAccount(provider: .glm)]
             secrets.keys = [accounts[0].id: "test-one", accounts[1].id: "test-two"]
-            module.preferences.update { $0.demoMode = false; $0.accounts = accounts }
+            module.preferences.update { $0.accounts = accounts }
             module.start()
             module.removeAccount(accounts[0].id)
             XCTAssertNil(secrets.keys[accounts[0].id])
@@ -329,14 +331,14 @@ final class SubscriptionQuotaTests: XCTestCase {
             module.preferences.update { $0.accounts[0].enabled = false }
             settle()
             XCTAssertTrue(client.glm.allSatisfy { $0.request.isCancelled })
-            client.glm.forEach { $0.completion(.success(.demo(for: .glm))) }
+            client.glm.forEach { $0.completion(.success(.fixture(for: .glm))) }
             settle()
             XCTAssertTrue(module.snapshots.isEmpty)
             module.preferences.update { $0.accounts[0].enabled = true }
             settle()
             let current = client.glm.last!
             module.stop()
-            current.completion(.success(.demo(for: .glm)))
+            current.completion(.success(.fixture(for: .glm)))
             settle()
             XCTAssertTrue(current.request.isCancelled)
             XCTAssertTrue(module.snapshots.isEmpty)
@@ -347,7 +349,6 @@ final class SubscriptionQuotaTests: XCTestCase {
     func testGLMReplacementOnlyCancelsSelectedAccountAndNeverStoresKeysInPreferences() {
         withFixture { settings, secrets, client in
             let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
-            module.preferences.update { $0.demoMode = false }
             module.start()
             defer { module.stop() }
             let one = SubscriptionAccount(provider: .glm), two = SubscriptionAccount(provider: .glm)
@@ -369,7 +370,7 @@ final class SubscriptionQuotaTests: XCTestCase {
     func testCodexImportValidatesBeforeSavingAndRestoresWithoutSourceFile() {
         withFixture { settings, secrets, client in
             let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
-            module.preferences.update { $0.demoMode = false; $0.codexExecutable = "/usr/bin/true" }
+            module.preferences.update { $0.codexExecutable = "/usr/bin/true" }
             let account = SubscriptionAccount(provider: .codex, alias: "工作")
             var saved: Bool?
             module.saveCodexAccount(account, authJSON: String(decoding: authData(), as: UTF8.self)) { saved = $0 }
@@ -378,7 +379,7 @@ final class SubscriptionQuotaTests: XCTestCase {
             XCTAssertTrue(secrets.auth.isEmpty)
             if case .saved(let data) = client.codex[0].input.auth { XCTAssertEqual(data, authData()) }
             else { XCTFail("导入必须验证指定文件") }
-            client.codex[0].completion(CodexQuotaResult(quota: .success(.demo(for: .codex)), authJSON: authData()))
+            client.codex[0].completion(CodexQuotaResult(quota: .success(.fixture(for: .codex)), authJSON: authData()))
             settle()
             XCTAssertEqual(saved, true)
             XCTAssertEqual(secrets.auth[account.id], authData())
@@ -412,7 +413,7 @@ final class SubscriptionQuotaTests: XCTestCase {
             XCTAssertEqual(module.preferences.value.accounts, [account])
             module.saveCodexAccount(replacement, authJSON: String(decoding: authData(), as: UTF8.self)) { saved = $0 }
             module.cancelAccountVerification()
-            client.codex[1].completion(CodexQuotaResult(quota: .success(.demo(for: .codex)), authJSON: authData("new-login")))
+            client.codex[1].completion(CodexQuotaResult(quota: .success(.fixture(for: .codex)), authJSON: authData("new-login")))
             settle()
             XCTAssertTrue(client.codex[1].request.isCancelled)
             XCTAssertEqual(secrets.auth[account.id], authData())
@@ -426,7 +427,7 @@ final class SubscriptionQuotaTests: XCTestCase {
             let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
             let account = SubscriptionAccount(provider: .codex, codexAuthStored: true)
             secrets.auth[account.id] = authData()
-            module.preferences.update { $0.demoMode = false; $0.accounts = [account]; $0.codexExecutable = "/usr/bin/true" }
+            module.preferences.update { $0.accounts = [account]; $0.codexExecutable = "/usr/bin/true" }
             module.start()
             defer { module.stop() }
             client.codex[0].completion(CodexQuotaResult(quota: .failure(.network), authJSON: authData("rotated-token")))
@@ -445,20 +446,20 @@ final class SubscriptionQuotaTests: XCTestCase {
     }
 
     @MainActor
-    func testSwitchingDemoModeCancelsQueriesAndRejectsStaleCredentials() {
+    func testDisablingAccountCancelsQueriesAndRejectsStaleCredentials() {
         withFixture { settings, secrets, client in
             let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
             let account = SubscriptionAccount(provider: .codex, codexAuthStored: true)
             secrets.auth[account.id] = authData()
-            module.preferences.update { $0.demoMode = false; $0.accounts = [account]; $0.codexExecutable = "/usr/bin/true" }
+            module.preferences.update { $0.accounts = [account]; $0.codexExecutable = "/usr/bin/true" }
             module.start()
             defer { module.stop() }
-            module.preferences.update { $0.demoMode = true }
+            module.preferences.update { $0.accounts[0].enabled = false }
             settle()
-            client.codex[0].completion(CodexQuotaResult(quota: .success(.demo(for: .codex)), authJSON: authData("stale-token")))
+            client.codex[0].completion(CodexQuotaResult(quota: .success(.fixture(for: .codex)), authJSON: authData("stale-token")))
             settle()
             XCTAssertTrue(client.codex[0].request.isCancelled)
-            XCTAssertEqual(module.snapshots.count, 4)
+            XCTAssertTrue(module.snapshots.isEmpty)
             XCTAssertEqual(secrets.auth[account.id], authData())
         }
     }
@@ -467,11 +468,11 @@ final class SubscriptionQuotaTests: XCTestCase {
     func testTwoImportedCodexAccountsStayIndependentAcrossCLIChanges() {
         withFixture { settings, secrets, client in
             let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
-            module.preferences.update { $0.demoMode = false; $0.codexExecutable = "/usr/bin/true" }
+            module.preferences.update { $0.codexExecutable = "/usr/bin/true" }
             let accounts = [SubscriptionAccount(provider: .codex, alias: "相同别名"), SubscriptionAccount(provider: .codex, alias: "相同别名")]
             for (index, account) in accounts.enumerated() {
                 module.saveCodexAccount(account, authJSON: String(decoding: authData(), as: UTF8.self)) { XCTAssertTrue($0) }
-                client.codex[index].completion(CodexQuotaResult(quota: .success(.demo(for: .codex)), authJSON: authData("account-\(index)-test-token")))
+                client.codex[index].completion(CodexQuotaResult(quota: .success(.fixture(for: .codex)), authJSON: authData("account-\(index)-test-token")))
                 settle()
             }
             module.start()
@@ -499,7 +500,7 @@ final class SubscriptionQuotaTests: XCTestCase {
             secrets.failCodexSave = true
             var saved: Bool?
             module.saveCodexAccount(SubscriptionAccount(provider: .codex), authJSON: String(decoding: authData(), as: UTF8.self)) { saved = $0 }
-            client.codex[0].completion(CodexQuotaResult(quota: .success(.demo(for: .codex)), authJSON: authData()))
+            client.codex[0].completion(CodexQuotaResult(quota: .success(.fixture(for: .codex)), authJSON: authData()))
             settle()
             XCTAssertEqual(saved, false)
             XCTAssertTrue(module.preferences.value.accounts.isEmpty)
@@ -520,6 +521,103 @@ final class SubscriptionQuotaTests: XCTestCase {
         try ("#!/bin/sh\n" + body + "\n").write(to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
         return executable
+    }
+
+    func testNotificationPreferenceMigrationAndThresholdBounds() throws {
+        for (raw, expected) in [("{}", 100), (#"{"demoMode":true,"notificationThreshold":150}"#, 100), (#"{"notificationThreshold":0}"#, 1)] {
+            let value = try JSONDecoder().decode(SubscriptionQuotaPreferences.self, from: Data(raw.utf8))
+            XCTAssertFalse(value.notificationsEnabled)
+            XCTAssertEqual(value.notificationThreshold, expected)
+            XCTAssertFalse(String(decoding: try JSONEncoder().encode(value), as: UTF8.self).contains("demoMode"))
+        }
+    }
+
+    @MainActor
+    func testQuotaNotificationsUseSharedChannelAndDeduplicateSuccessfulSamples() {
+        withFixture { settings, secrets, client in
+            let notifications = QuotaTestNotifications()
+            let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets, notifications: notifications)
+            let accounts = [SubscriptionAccount(provider: .glm, alias: "个人"), SubscriptionAccount(provider: .glm, alias: "工作")]
+            accounts.forEach { secrets.keys[$0.id] = "test-only-not-a-real-key" }
+            module.preferences.update { $0.accounts = accounts }
+            module.start()
+            defer { module.stop() }
+            let reset = Date().addingTimeInterval(3600)
+            func snapshot(_ value: Double, _ cycle: Date? = nil) -> SubscriptionQuotaSnapshot {
+                .init(plan: nil, windows: [.init(id: "weekly", title: "每周", usedPercent: value, resetsAt: cycle ?? reset)], fetchedAt: Date())
+            }
+            client.glm.forEach { $0.completion(.success(snapshot(100))) }
+            settle()
+            XCTAssertTrue(notifications.messages.isEmpty)
+            module.preferences.update { $0.notificationsEnabled = true }
+            settle()
+            XCTAssertEqual(notifications.messages.count, 2)
+            XCTAssertTrue(notifications.messages[0].body.contains("100%"))
+            module.refresh()
+            client.glm.suffix(2).forEach { $0.completion(.success(snapshot(105))) }
+            settle()
+            XCTAssertEqual(notifications.messages.count, 2)
+            module.preferences.update { $0.notificationThreshold = 80 }
+            settle()
+            XCTAssertEqual(notifications.messages.count, 4)
+            notifications.delivered = false
+            module.refresh()
+            client.glm.suffix(2).forEach { $0.completion(.success(snapshot(90, reset.addingTimeInterval(3600)))) }
+            settle()
+            XCTAssertEqual(notifications.messages.count, 6)
+            notifications.delivered = true
+            module.refresh()
+            client.glm.suffix(2).forEach { $0.completion(.success(snapshot(90, reset.addingTimeInterval(3600)))) }
+            settle()
+            XCTAssertEqual(notifications.messages.count, 8)
+            module.refresh()
+            client.glm.suffix(2).forEach { $0.completion(.failure(.network)) }
+            settle()
+            XCTAssertEqual(notifications.messages.count, 8)
+            module.stop()
+            module.refresh()
+            XCTAssertEqual(notifications.messages.count, 8)
+        }
+    }
+
+    @MainActor
+    func testRenderSubscriptionViewsWhenRequested() throws {
+        guard let directory = ProcessInfo.processInfo.environment["NOTCHDECK_RENDER_DIR"] else { return }
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        withFixture { settings, secrets, client in
+            let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
+            let accounts = [SubscriptionAccount(provider: .glm, alias: "个人订阅"), SubscriptionAccount(provider: .glm, alias: "工作订阅")]
+            accounts.forEach { secrets.keys[$0.id] = "test-only-not-a-real-key" }
+            module.preferences.update { $0.accounts = accounts }
+            module.start()
+            defer { module.stop() }
+            let snapshot = SubscriptionQuotaSnapshot(plan: "Pro", windows: [
+                .init(id: "short", title: "5 小时", usedPercent: 100, resetsAt: Date().addingTimeInterval(3600)),
+                .init(id: "weekly", title: "每周", usedPercent: 38, resetsAt: nil),
+                .init(id: "extra", title: "工具调用", usedPercent: 0, resetsAt: Date().addingTimeInterval(-60)),
+            ], fetchedAt: Date())
+            client.glm.forEach { $0.completion(.success(snapshot)) }
+            settle()
+            for dark in [false, true] {
+                for mode in ["cards", "rings", "compact", "settings"] {
+                    let view: AnyView = mode == "settings" ?
+                        AnyView(Form { SubscriptionQuotaSettingsView(module: module, preferences: module.preferences) }.formStyle(.grouped)) :
+                        AnyView(SubscriptionQuotaView(module: module, preferences: module.preferences)
+                            .environment(\.modulePresentation, .init(placement: .tab, displayModeID: mode)))
+                    let host = NSHostingView(rootView: view.padding(16).frame(width: 480, height: 540, alignment: .topLeading)
+                        .background(dark ? Color.black : Color.white).environment(\.colorScheme, dark ? .dark : .light))
+                    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 540), styleMask: [.borderless], backing: .buffered, defer: false)
+                    window.contentView = host
+                    window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    host.layoutSubtreeIfNeeded()
+                    guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { XCTFail("无法渲染"); continue }
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    let path = directory + "/subscriptions-" + mode + (dark ? "-dark.png" : "-light.png")
+                    do { try rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path)) }
+                    catch { XCTFail("截图写入失败：\(error)") }
+                }
+            }
+        }
     }
 
     private func assertFailure(_ result: Result<SubscriptionQuotaSnapshot, SubscriptionQuotaError>, _ expected: SubscriptionQuotaError,
@@ -595,4 +693,24 @@ private final class QuotaURLProtocol: URLProtocol {
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+}
+
+private extension SubscriptionQuotaSnapshot {
+    static func fixture(for provider: SubscriptionProvider, now: Date = Date()) -> Self {
+        Self(plan: provider == .glm ? "Pro · 示例" : "Plus · 示例", windows: [
+            SubscriptionQuotaWindow(id: "short", title: "5 小时", usedPercent: provider == .glm ? 32 : 68,
+                resetsAt: now.addingTimeInterval(2 * 3600 + 40 * 60)),
+            SubscriptionQuotaWindow(id: "weekly", title: "每周", usedPercent: provider == .glm ? 57 : 24,
+                resetsAt: now.addingTimeInterval(3 * 86400 + 3600)),
+        ], fetchedAt: now)
+    }
+}
+
+private final class QuotaTestNotifications: AppNotificationSending {
+    var messages: [AppNotification] = []
+    var delivered = true
+    func send(_ notification: AppNotification, completion: @escaping (Bool) -> Void) {
+        messages.append(notification)
+        completion(delivered)
+    }
 }

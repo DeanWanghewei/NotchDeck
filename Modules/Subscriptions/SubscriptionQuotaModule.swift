@@ -22,9 +22,11 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
     @Published private(set) var active = false
 
     var displayedAccounts: [SubscriptionAccount] {
-        preferences.value.demoMode ? SubscriptionAccount.demoAccounts : preferences.value.accounts.filter(\.enabled)
+        preferences.value.accounts.filter(\.enabled)
     }
 
+    private let notifications: AppNotificationSending
+    private var alertGate = ThresholdAlertGate()
     private let clients: SubscriptionQuotaClients
     private let secrets: SubscriptionSecretStore
     private var subscription: AnyCancellable?
@@ -39,8 +41,10 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
     private var verifyingAccountID: String?
 
     init(settings: SettingsStore = .shared, clients: SubscriptionQuotaClients = .live,
-         secrets: SubscriptionSecretStore = SubscriptionFileSecretStore()) {
+         secrets: SubscriptionSecretStore = SubscriptionFileSecretStore(),
+         notifications: AppNotificationSending = AppNotificationService.shared) {
         preferences = settings.modulePreferences(for: Self.descriptor.id, default: SubscriptionQuotaPreferences())
+        self.notifications = notifications
         self.clients = clients
         self.secrets = secrets
     }
@@ -92,7 +96,6 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
         guard active else { return }
         let next = preferences.value
         let previous = appliedPreferences
-        if previous?.demoMode != next.demoMode { reset() }
         if let previous {
             for account in previous.accounts {
                 let current = next.accounts.first { $0.id == account.id }
@@ -104,28 +107,36 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
             }
         }
         appliedPreferences = next
-        if next.demoMode {
-            if snapshots.isEmpty {
-                snapshots = Dictionary(uniqueKeysWithValues: SubscriptionAccount.demoAccounts.enumerated().map { index, account in
-                    var snapshot = SubscriptionQuotaSnapshot.demo(for: account.provider)
-                    if index % 2 == 1 {
-                        snapshot = SubscriptionQuotaSnapshot(plan: snapshot.plan, windows: snapshot.windows.map {
-                            SubscriptionQuotaWindow(id: $0.id, title: $0.title, usedPercent: max(0, $0.usedPercent - 19), resetsAt: $0.resetsAt)
-                        }, fetchedAt: snapshot.fetchedAt)
-                    }
-                    return (account.id, snapshot)
-                })
+        if let (id, snapshot) = seed {
+            snapshots[id] = snapshot
+            notifyIfNeeded(accountID: id, snapshot: snapshot)
+        }
+        if timer == nil {
+            timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.refresh() }
+            timer?.tolerance = 20
+        }
+        for account in displayedAccounts where snapshots[account.id] == nil && errors[account.id] == nil {
+            enqueue(account.id)
+        }
+        if previous?.notificationsEnabled != next.notificationsEnabled || previous?.notificationThreshold != next.notificationThreshold {
+            for (id, snapshot) in snapshots where errors[id] == nil { notifyIfNeeded(accountID: id, snapshot: snapshot) }
+        }
+        pumpQueries()
+    }
+
+    private func notifyIfNeeded(accountID: String, snapshot: SubscriptionQuotaSnapshot) {
+        guard preferences.value.notificationsEnabled,
+              let account = displayedAccounts.first(where: { $0.id == accountID }) else { return }
+        let threshold = preferences.value.effectiveNotificationThreshold
+        for window in snapshot.windows {
+            // 过期快照不能当作新周期的用量，也不能因网络失败重复提醒。
+            guard window.resetsAt.map({ $0 > Date() }) ?? true else { continue }
+            let key = accountID + ":" + window.id
+            guard alertGate.shouldNotify(key: key, value: window.usedPercent, threshold: Double(threshold), cycle: window.resetsAt) else { continue }
+            notifications.send(AppNotification(id: "subscriptions." + key, title: "订阅额度提醒",
+                body: "\(account.displayName(in: displayedAccounts)) · \(account.provider.title) · \(window.title)已用 \(window.usedPercent.formatted())%（阈值 \(threshold)%）")) { [weak self] delivered in
+                if !delivered { self?.alertGate.retry(key: key) }
             }
-        } else {
-            if let (id, snapshot) = seed { snapshots[id] = snapshot }
-            if timer == nil {
-                timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.refresh() }
-                timer?.tolerance = 20
-            }
-            for account in displayedAccounts where snapshots[account.id] == nil && errors[account.id] == nil {
-                enqueue(account.id)
-            }
-            pumpQueries()
         }
     }
 
@@ -134,7 +145,7 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
     }
 
     func refresh() {
-        guard active, !preferences.value.demoMode else { return }
+        guard active else { return }
         lastAttempt = Date()
         displayedAccounts.forEach { enqueue($0.id) }
         pumpQueries()
@@ -147,7 +158,7 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
     }
 
     private func pumpQueries() {
-        guard active, !preferences.value.demoMode else { return }
+        guard active else { return }
         // 避免大量账号同时启动 CLI；排队中的账号仍可单独取消。
         while requests.count < 3, !pendingIDs.isEmpty {
             let id = pendingIDs.removeFirst()
@@ -157,13 +168,16 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
             requests[id] = SubscriptionQuotaRequest()
             let completion: SubscriptionQuotaCompletion = { [weak self] result in
                 DispatchQueue.main.async {
-                    guard let self, self.active, !self.preferences.value.demoMode, self.queryIDs[id] == queryID,
+                    guard let self, self.active, self.queryIDs[id] == queryID,
                           self.preferences.value.accounts.contains(where: { $0.id == id && $0.enabled }) else { return }
                     self.requests.removeValue(forKey: id)
                     self.queryIDs.removeValue(forKey: id)
                     self.refreshing.remove(id)
                     switch result {
-                    case .success(let snapshot): self.snapshots[id] = snapshot; self.errors.removeValue(forKey: id)
+                    case .success(let snapshot):
+                        self.snapshots[id] = snapshot
+                        self.errors.removeValue(forKey: id)
+                        self.notifyIfNeeded(accountID: id, snapshot: snapshot)
                     case .failure(let error): self.errors[id] = error
                     }
                     self.pumpQueries()

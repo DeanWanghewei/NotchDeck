@@ -76,7 +76,7 @@ static let descriptor = ModuleDescriptor(
 // presentation.displayModeID：本次实际样式，如 "cards" / "compact"
 ```
 
-在视图中按样式 id 组织卡片、列表、数字、曲线或热力图；必须实现自己声明的每种样式。参考 `UI/SubscriptionQuotaView.swift`：长条、圆环和紧凑长条复用同一份多账号数据与采集器，圆环中心直接显示已用百分比，紧凑样式保留已用/剩余数字和用量条，重置说明通过悬停查看。更改区域、样式和顺序不会重新启动采集。百分比、冷暖色标、缺失值仍须遵循 [design-conventions.md](design-conventions.md)，不能由样式覆盖数据语义。
+在视图中按样式 id 组织卡片、列表、数字、曲线或热力图；必须实现自己声明的每种样式。参考 `UI/SubscriptionQuotaView.swift`：长条、圆环和紧凑长条复用同一份多账号数据与采集器，圆环中心直接显示已用百分比，紧凑样式保留已用/剩余数字和用量条，重置说明直接展示。更改区域、样式和顺序不会重新启动采集。百分比、冷暖色标、缺失值仍须遵循 [design-conventions.md](design-conventions.md)，不能由样式覆盖数据语义。
 
 GitHub 目录用于介绍这些能力；运行时以应用随附插件的声明与实现为准，刷新 JSON 不会增添新的布局代码或视图。
 
@@ -128,3 +128,13 @@ xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck \
 ```
 
 涉及界面时还需用 `NSHostingView` 承载实际视图，以浅色和深色 `NSAppearance` 分别通过 `cacheDisplay` 导出 PNG 并目检。覆盖面板、组件设置、默认及最小窗口尺寸；检查中文截断、滚动、选中态和对比度。自渲染不能完整还原系统玻璃材质，该部分仍需实机查看。功能与文档变化同步更新 README。
+
+## 公共消息提醒
+
+模块通过 Core 的 `AppNotificationSending` 注入通知通道，提交 `AppNotification(id:title:body:)`，不直接使用系统通知 API。`AppNotificationService` 统一处理授权检查、系统投递、前台横幅和错误状态；`send` 不申请权限，完成回调在主队列返回是否成功提交。
+
+设置页使用 `NotificationPermissionToggle` 绑定模块自己的开关。默认关闭，仅用户主动开启时申请权限，拒绝时保持关闭并给出系统设置路径。请勿在初始化、start 或后台刷新中请求授权。系统通知仍受专注模式与用户通知样式控制。
+
+指标判断可复用 `ThresholdAlertGate`：按指标 key、阈值、服务返回的周期时间去重；无周期时先降到阈值以下再重新触发。投递失败调用 `retry(key:)` 允许后续采样重试。门控状态保存在当前模块实例中，重启应用或移除再添加插件后可再次提醒。测试注入 `AppNotificationSending` 替身，不申请权限、不发送真实通知。
+
+订阅界面自渲染可通过 `TEST_RUNNER_NOTCHDECK_RENDER_DIR=/tmp/notchdeck-quota-render xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test` 复现。使用模拟数据、`NSHostingView` 与 `cacheDisplay`，不启动主应用或请求录屏权限。
