@@ -71,7 +71,7 @@ final class PluginMarketplaceTests: XCTestCase {
     func testFreshMarketplaceDoesNotInstantiateOrStartOptionalPluginsOrFetch() {
         var creations = 0
         var fetches = 0
-        let definition = PluginImplementation(descriptor: MarketplaceFixture.descriptor, version: "1.0.0") { _ in
+        let definition = PluginImplementation(descriptor: MarketplaceFixture.descriptor, version: catalog.plugins[0].version) { _ in
             creations += 1; return ModuleBox(MarketplaceFixture())
         }
         let registry = ModuleRegistry()
@@ -88,7 +88,7 @@ final class PluginMarketplaceTests: XCTestCase {
 
     func testInstallRemoveReinstallPreservePreferencesAndStopBeforeUnregistering() {
         var instances: [MarketplaceFixture] = []
-        let definition = PluginImplementation(descriptor: MarketplaceFixture.descriptor, version: "1.0.0") { _ in
+        let definition = PluginImplementation(descriptor: MarketplaceFixture.descriptor, version: catalog.plugins[0].version) { _ in
             let module = MarketplaceFixture()
             instances.append(module)
             return ModuleBox(module)
@@ -103,7 +103,7 @@ final class PluginMarketplaceTests: XCTestCase {
         XCTAssertFalse(market.install("unknown"))
         XCTAssertEqual(instances.count, 1)
         XCTAssertEqual(instances[0].events, ["start", "expand"])
-        XCTAssertEqual(market.installedVersion("subscriptions"), "1.0.0")
+        XCTAssertEqual(market.installedVersion("subscriptions"), catalog.plugins[0].version)
         settings.updateConfig(for: "subscriptions") { $0.pinned = true }
         XCTAssertTrue(market.remove("subscriptions"))
         XCTAssertFalse(market.remove("subscriptions"))
@@ -273,7 +273,7 @@ final class PluginMarketplaceTests: XCTestCase {
         XCTAssertEqual(market.catalog, older)
         XCTAssertEqual(market.listings, catalog.plugins)
         XCTAssertTrue(market.install("subscriptions"))
-        XCTAssertEqual(market.installedVersion("subscriptions"), "1.0.0")
+        XCTAssertEqual(market.installedVersion("subscriptions"), catalog.plugins[0].version)
     }
 
     @MainActor
@@ -334,7 +334,7 @@ final class PluginMarketplaceTests: XCTestCase {
     }
 
     private func implementation(_ module: MarketplaceFixture) -> PluginImplementation {
-        PluginImplementation(descriptor: MarketplaceFixture.descriptor, version: "1.0.0", makeModule: { _ in ModuleBox(module) })
+        PluginImplementation(descriptor: MarketplaceFixture.descriptor, version: catalog.plugins[0].version, makeModule: { _ in ModuleBox(module) })
     }
 
     private func listing(id: String) -> PluginListing {

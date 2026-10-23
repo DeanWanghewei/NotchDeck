@@ -6,6 +6,7 @@ struct SubscriptionQuotaView: View {
     @Environment(\.modulePresentation) private var presentation
 
     private var compact: Bool { presentation.displayModeID == "compact" }
+    private var rings: Bool { presentation.displayModeID == "rings" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 8 : 10) {
@@ -16,45 +17,53 @@ struct SubscriptionQuotaView: View {
                     Text("演示数据").font(.caption2).foregroundStyle(Color.accentColor)
                 } else {
                     Button { module.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.plain).help("刷新订阅额度")
+                        .buttonStyle(.plain).help("刷新所有账号的订阅额度")
                         .disabled(!module.refreshing.isEmpty)
                 }
-                Button {
-                    NotificationCenter.default.post(name: AppModel.openSettingsRequest, object: module.id)
-                } label: { Image(systemName: "gearshape") }
-                    .buttonStyle(.plain).help("配置订阅额度")
+                Button { openSettings() } label: { Image(systemName: "gearshape") }
+                    .buttonStyle(.plain).help("管理订阅账号")
             }
             if preferences.value.demoMode && !compact {
-                Text("当前数字为示例。在组件设置中关闭演示模式并连接账号。")
+                Text("以下为多账号演示。在组件设置中添加账号并关闭演示模式。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            ForEach(SubscriptionProvider.allCases) { provider in
-                providerCard(provider)
+            if module.displayedAccounts.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("暂无启用的订阅账号").font(.caption).foregroundStyle(.secondary)
+                    Button("添加 GLM / Codex 账号") { openSettings() }.controlSize(.small)
+                }.padding(.vertical, 8)
             }
-            Text(compact ? "悬停用量行查看重置时间，读数以官方用量页为准。" : "额度与重置时间以官方用量页为准。")
+            ForEach(module.displayedAccounts) { account in accountCard(account) }
+            Text(compact ? "悬停用量行查看重置时间，读数以官方用量页为准。" : "已用百分比 · 额度与重置时间以官方用量页为准。")
                 .font(.caption2).foregroundStyle(.tertiary)
         }
     }
 
-    private func providerCard(_ provider: SubscriptionProvider) -> some View {
-        let snapshot = module.snapshots[provider]
-        let error = module.errors[provider]
+    private func accountCard(_ account: SubscriptionAccount) -> some View {
+        let snapshot = module.snapshots[account.id]
+        let error = module.errors[account.id]
         return VStack(alignment: .leading, spacing: compact ? 6 : 10) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(provider.title).font(.system(size: 12, weight: .semibold))
-                    if !compact, let plan = snapshot?.plan, !plan.isEmpty {
-                        Text(plan.capitalized).font(.caption2).foregroundStyle(.secondary)
-                    }
+                    Text(account.displayName(in: module.displayedAccounts))
+                        .font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                        .help(account.displayName(in: module.displayedAccounts))
+                    Text([account.provider.title, compact ? nil : snapshot?.plan?.capitalized].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
-                Spacer()
-                if module.refreshing.contains(provider) { ProgressView().controlSize(.mini) }
-                Link(destination: provider.usageURL) {
-                    Image(systemName: "arrow.up.right.square")
-                }.help("打开官方用量页")
+                Spacer(minLength: 4)
+                if module.refreshing.contains(account.id) { ProgressView().controlSize(.mini) }
+                Link(destination: account.provider.usageURL) { Image(systemName: "arrow.up.right.square") }
+                    .help("打开官方用量页，网页账号可能与此处保存的账号不同")
             }
             if let snapshot {
-                ForEach(snapshot.windows) { window in quotaRow(window) }
+                if rings {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: min(2, max(1, snapshot.windows.count))), spacing: 12) {
+                        ForEach(snapshot.windows) { window in ring(window) }
+                    }
+                } else {
+                    ForEach(snapshot.windows) { window in quotaRow(window) }
+                }
                 if !preferences.value.demoMode {
                     HStack(spacing: 3) {
                         Text(error == nil ? "更新于" : "保留上次数据 ·")
@@ -62,11 +71,11 @@ struct SubscriptionQuotaView: View {
                     }.font(.caption2).foregroundStyle(.secondary)
                 }
             } else if error == nil {
-                Text(module.refreshing.contains(provider) ? "正在查询…" : "尚未连接，在组件设置中连接账号")
+                Text(module.refreshing.contains(account.id) ? "正在查询…" : "等待查询")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if let error {
-                Text(error.message(for: provider)).font(.caption).foregroundStyle(.secondary)
+                Text(error.message(for: account.provider)).font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(compact ? 8 : 12)
@@ -74,7 +83,7 @@ struct SubscriptionQuotaView: View {
     }
 
     private func quotaRow(_ window: SubscriptionQuotaWindow) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 Text(window.title).font(.caption).frame(width: 64, alignment: .leading)
                 GeometryReader { proxy in
@@ -83,24 +92,52 @@ struct SubscriptionQuotaView: View {
                         Capsule().fill(HeatScale.color(window.fraction))
                             .frame(width: proxy.size.width * window.fraction)
                     }
-                }.frame(height: 5)
-                Text(compact ? String(format: "已用 %.0f%% · 剩余 %.0f%%", window.usedPercent, window.remainingPercent) :
-                        String(format: "已用 %.0f%%", window.usedPercent))
+                }.frame(height: compact ? 5 : 8)
+                Text(String(format: "已用 %.0f%%", window.usedPercent))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(window.fraction >= 0.7 ? HeatScale.color(window.fraction) : .secondary)
-                    .frame(width: compact ? 136 : 72, alignment: .trailing)
+                    .frame(width: 72, alignment: .trailing)
             }
-            if !compact {
-                HStack {
-                    Text(resetDescription(window))
-                    Spacer(minLength: 4)
-                    Text("剩余 \(window.remainingPercent, specifier: "%.0f")%")
-                        .monospacedDigit()
-                }
-                .font(.system(size: 10)).foregroundStyle(.secondary)
-            }
+            HStack {
+                if !compact { Text(resetDescription(window)) }
+                Spacer(minLength: 4)
+                Text("剩余 \(window.remainingPercent, specifier: "%.0f")%").monospacedDigit()
+            }.font(.system(size: 10)).foregroundStyle(.secondary)
         }
         .help(resetDescription(window))
+    }
+
+    private func ring(_ window: SubscriptionQuotaWindow) -> some View {
+        VStack(spacing: 6) {
+            Text(window.title).font(.caption).lineLimit(1)
+            ZStack {
+                Circle().stroke(Color.primary.opacity(0.08), lineWidth: 7)
+                if window.fraction > 0 {
+                    Circle().trim(from: 0, to: window.fraction)
+                        .stroke(HeatScale.color(window.fraction), style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                VStack(spacing: 1) {
+                    Text("\(window.usedPercent, specifier: "%.0f")%")
+                        .font(.system(size: 17, weight: .semibold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(window.fraction >= 0.7 ? HeatScale.color(window.fraction) : .secondary)
+                        .minimumScaleFactor(0.6).lineLimit(1)
+                    Text("已用").font(.system(size: 9)).foregroundStyle(.secondary)
+                }.padding(8)
+            }.frame(width: 76, height: 76).padding(4)
+            Text("剩余 \(window.remainingPercent, specifier: "%.0f")%")
+                .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            Text(resetDescription(window)).font(.system(size: 10)).foregroundStyle(.secondary)
+                .lineLimit(2).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .help(resetDescription(window))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(window.title)，已用 \(window.usedPercent, specifier: "%.0f")%，剩余 \(window.remainingPercent, specifier: "%.0f")%，\(resetDescription(window))")
+    }
+
+    private func openSettings() {
+        NotificationCenter.default.post(name: AppModel.openSettingsRequest, object: module.id)
     }
 
     private func resetDescription(_ window: SubscriptionQuotaWindow) -> String {

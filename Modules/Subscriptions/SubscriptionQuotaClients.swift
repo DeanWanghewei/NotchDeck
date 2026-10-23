@@ -35,34 +35,63 @@ final class SubscriptionQuotaRequest {
 typealias SubscriptionQuotaCompletion = (Result<SubscriptionQuotaSnapshot, SubscriptionQuotaError>) -> Void
 typealias SubscriptionQuotaFetch = (String, @escaping SubscriptionQuotaCompletion) -> SubscriptionQuotaRequest
 
+enum CodexQuotaAuth {
+    case localCLI
+    case file(String)
+    case saved(Data)
+}
+
+struct CodexQuotaInput {
+    var executable: String
+    var auth: CodexQuotaAuth = .localCLI
+}
+
+struct CodexQuotaResult {
+    var quota: Result<SubscriptionQuotaSnapshot, SubscriptionQuotaError>
+    var authJSON: Data?
+}
+
+typealias CodexQuotaCompletion = (CodexQuotaResult) -> Void
+
 struct SubscriptionQuotaClients {
     var glm: SubscriptionQuotaFetch
-    var codex: SubscriptionQuotaFetch
+    var codex: (CodexQuotaInput, @escaping CodexQuotaCompletion) -> SubscriptionQuotaRequest
 
     static let live = Self(glm: { key, completion in
         GLMQuotaQuery.start(key: key, completion: completion)
-    }, codex: { executable, completion in
+    }, codex: { input, completion in
         let request = SubscriptionQuotaRequest()
         DispatchQueue.global(qos: .utility).async {
-            completion(CodexQuotaQuery.read(executable: executable, cancellation: request))
+            completion(CodexQuotaQuery.query(input, cancellation: request))
         }
         return request
     })
 }
 
 protocol SubscriptionSecretStore {
-    func readGLMKey() throws -> String?
-    func saveGLMKey(_ key: String) throws
-    func removeGLMKey() throws
+    func readGLMKey(accountID: String) throws -> String?
+    func saveGLMKey(_ key: String, accountID: String) throws
+    func removeGLMKey(accountID: String) throws
+    func readCodexAuth(accountID: String) throws -> Data?
+    func saveCodexAuth(_ data: Data, accountID: String) throws
+    func removeCodexAuth(accountID: String) throws
 }
 
-/// 仅访问 NotchDeck 自己保存的项目；组件未连接时不访问钥匙串，不读取浏览器 Cookie。
+/// 每个账号独立保存；仅访问 NotchDeck 的项目，不读取 Codex 或浏览器的钥匙串。
 struct SubscriptionKeychain: SubscriptionSecretStore {
-    private var query: [String: Any] { [kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: "com.notchdeck.app.subscription-quota", kSecAttrAccount as String: "glm-coding-plan"] }
+    static func itemName(provider: SubscriptionProvider, accountID: String) -> String {
+        if provider == .glm && accountID == SubscriptionAccount.legacyGLMID { return "glm-coding-plan" }
+        return "\(provider.rawValue).\(accountID)"
+    }
 
-    func readGLMKey() throws -> String? {
-        var query = query
+    private func query(_ provider: SubscriptionProvider, _ accountID: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: "com.notchdeck.app.subscription-quota",
+         kSecAttrAccount as String: Self.itemName(provider: provider, accountID: accountID)]
+    }
+
+    private func read(_ provider: SubscriptionProvider, _ accountID: String) throws -> Data? {
+        var query = query(provider, accountID)
         query[kSecReturnData as String] = true
         let context = LAContext()
         context.interactionNotAllowed = true
@@ -70,25 +99,68 @@ struct SubscriptionKeychain: SubscriptionSecretStore {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data, let key = String(data: data, encoding: .utf8) else {
-            throw SubscriptionQuotaError.keychain
-        }
-        return key
+        guard status == errSecSuccess, let data = result as? Data else { throw SubscriptionQuotaError.keychain }
+        return data
     }
 
-    func saveGLMKey(_ key: String) throws {
-        let attributes = [kSecValueData as String: Data(key.utf8)]
+    private func save(_ data: Data, provider: SubscriptionProvider, accountID: String) throws {
+        let query = query(provider, accountID)
+        let attributes = [kSecValueData as String: data]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
             var item = query
-            item[kSecValueData as String] = Data(key.utf8)
+            item[kSecValueData as String] = data
             guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw SubscriptionQuotaError.keychain }
         } else if status != errSecSuccess { throw SubscriptionQuotaError.keychain }
     }
 
-    func removeGLMKey() throws {
-        let status = SecItemDelete(query as CFDictionary)
+    private func remove(_ provider: SubscriptionProvider, _ accountID: String) throws {
+        let status = SecItemDelete(query(provider, accountID) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw SubscriptionQuotaError.keychain }
+    }
+
+    func readGLMKey(accountID: String) throws -> String? {
+        guard let data = try read(.glm, accountID) else { return nil }
+        guard let key = String(data: data, encoding: .utf8) else { throw SubscriptionQuotaError.keychain }
+        return key
+    }
+    func saveGLMKey(_ key: String, accountID: String) throws { try save(Data(key.utf8), provider: .glm, accountID: accountID) }
+    func removeGLMKey(accountID: String) throws { try remove(.glm, accountID) }
+    func readCodexAuth(accountID: String) throws -> Data? { try read(.codex, accountID) }
+    func saveCodexAuth(_ data: Data, accountID: String) throws { try save(data, provider: .codex, accountID: accountID) }
+    func removeCodexAuth(accountID: String) throws { try remove(.codex, accountID) }
+}
+
+/// 只在用户导入时读取指定文件；账号元数据不保存 token，原文件不会被修改。
+enum CodexAuthDocument {
+    static let maximumBytes = 256 * 1024
+
+    static func validate(_ data: Data) throws -> Data {
+        guard data.count <= maximumBytes,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tokens = object["tokens"] as? [String: Any],
+              let accessToken = tokens["access_token"] as? String, !accessToken.isEmpty,
+              object["auth_mode"] == nil || object["auth_mode"] as? String == "chatgpt" else {
+            throw SubscriptionQuotaError.invalidAuthFile
+        }
+        return data
+    }
+
+    static func load(path: String) throws -> Data {
+        let expanded = (path.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
+        guard expanded.hasPrefix("/"), FileManager.default.isReadableFile(atPath: expanded) else {
+            throw SubscriptionQuotaError.authFileUnavailable
+        }
+        do {
+            let url = URL(fileURLWithPath: expanded)
+            guard try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+                throw SubscriptionQuotaError.authFileUnavailable
+            }
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            return try validate(handle.read(upToCount: maximumBytes + 1) ?? Data())
+        } catch let error as SubscriptionQuotaError { throw error }
+        catch { throw SubscriptionQuotaError.authFileUnavailable }
     }
 }
 
@@ -177,15 +249,53 @@ enum CodexQuotaQuery {
         }
     }
 
-    /// codex-cli 0.163 的 schema 与实机探针验证：initialize → initialized → account/rateLimits/read。
-    /// 只请求额度，不创建会话、不读取或复制 auth.json；CLI 使用自身已有登录。
-    static func read(executable: String, cancellation: SubscriptionQuotaRequest, timeout: TimeInterval = 12)
+    /// 官方 file 存储使用 CODEX_HOME/auth.json；隔离目录避免回退到用户当前登录。
+    /// 本机 0.163 探针完成隔离握手，合成无效 token 返回认证失败；不运行模型或登录切换。
+    static func query(_ input: CodexQuotaInput, cancellation: SubscriptionQuotaRequest, timeout: TimeInterval = 12) -> CodexQuotaResult {
+        guard !cancellation.isCancelled else { return CodexQuotaResult(quota: .failure(.cancelled)) }
+        var home: URL?
+        defer { if let home { try? FileManager.default.removeItem(at: home) } }
+        do {
+            let auth: Data
+            switch input.auth {
+            case .localCLI:
+                return CodexQuotaResult(quota: read(executable: input.executable, cancellation: cancellation, timeout: timeout))
+            case .file(let path): auth = try CodexAuthDocument.load(path: path)
+            case .saved(let data): auth = try CodexAuthDocument.validate(data)
+            }
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notchdeck-codex-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                                                   attributes: [.posixPermissions: 0o700])
+            home = directory
+            let file = directory.appendingPathComponent("auth.json")
+            guard FileManager.default.createFile(atPath: file.path, contents: auth, attributes: [.posixPermissions: 0o600]) else {
+                return CodexQuotaResult(quota: .failure(.authFileUnavailable))
+            }
+            let result = read(executable: input.executable, cancellation: cancellation, timeout: timeout, isolatedHome: directory)
+            // CLI 负责刷新 token；即使额度请求失败，也保留已经轮换的登录供下次查询使用。
+            let refreshed = try? CodexAuthDocument.load(path: file.path)
+            return CodexQuotaResult(quota: result, authJSON: refreshed)
+        } catch let error as SubscriptionQuotaError { return CodexQuotaResult(quota: .failure(error)) }
+        catch { return CodexQuotaResult(quota: .failure(.authFileUnavailable)) }
+    }
+
+    /// initialize → initialized → account/rateLimits/read；不创建会话或调用模型。
+    static func read(executable: String, cancellation: SubscriptionQuotaRequest, timeout: TimeInterval = 12,
+                     isolatedHome: URL? = nil)
         -> Result<SubscriptionQuotaSnapshot, SubscriptionQuotaError> {
         guard !cancellation.isCancelled else { return .failure(.cancelled) }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = ["app-server"]
-        process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+        if let isolatedHome {
+            var environment = ProcessInfo.processInfo.environment
+            environment["CODEX_HOME"] = isolatedHome.path
+            environment.removeValue(forKey: "OPENAI_API_KEY")
+            environment.removeValue(forKey: "CODEX_API_KEY")
+            process.environment = environment
+            process.arguments! += ["-c", "cli_auth_credentials_store=\"file\"", "-c", "analytics.enabled=false"]
+        }
+        process.currentDirectoryURL = isolatedHome ?? FileManager.default.homeDirectoryForCurrentUser
         let input = Pipe(), output = Pipe()
         process.standardInput = input
         process.standardOutput = output
@@ -225,7 +335,7 @@ enum CodexQuotaQuery {
                               let id = object["id"] as? Int else { continue }
                         if let error = object["error"] as? [String: Any] {
                             let message = (error["message"] as? String ?? "").lowercased()
-                            return .failure(message.contains("auth") || message.contains("login") ? .signInRequired : .invalidResponse)
+                            return .failure(message.contains("auth") || message.contains("login") || message.contains("token") || message.contains("401") ? .signInRequired : .invalidResponse)
                         }
                         if id == 1 && !initialized {
                             initialized = true

@@ -1,6 +1,6 @@
 import Foundation
 
-enum SubscriptionProvider: String, CaseIterable, Identifiable {
+enum SubscriptionProvider: String, Codable, CaseIterable, Identifiable {
     case glm, codex
     var id: String { rawValue }
     var title: String { self == .glm ? "GLM Coding Plan" : "ChatGPT · Codex" }
@@ -36,19 +36,22 @@ struct SubscriptionQuotaSnapshot: Equatable {
 
 enum SubscriptionQuotaError: Error, Equatable {
     case invalidResponse, signInRequired, missingKey, missingCLI, timeout, cancelled, network, keychain
+    case authFileUnavailable, invalidAuthFile
     case http(Int)
 
     func message(for provider: SubscriptionProvider) -> String {
         switch self {
         case .invalidResponse: return "未识别到额度数据，请查看官方用量页"
         case .signInRequired:
-            return provider == .glm ? "密钥无效或无权查询，请检查 Coding Plan 密钥" : "请先在 Codex CLI 中使用 ChatGPT 账号登录"
+            return provider == .glm ? "密钥无效或无权查询，请检查 Coding Plan 密钥" : "登录已失效或未使用 ChatGPT 登录，请重新导入 auth.json"
+        case .authFileUnavailable: return "无法读取登录文件，请重新选择 auth.json"
+        case .invalidAuthFile: return "登录文件无效，请选择 ChatGPT 登录生成的 auth.json"
         case .missingKey: return "请在组件设置中保存 GLM Coding Plan 密钥"
         case .missingCLI: return "未找到 Codex CLI，请安装或在组件设置中指定路径"
         case .timeout: return "查询超时，稍后可重试"
         case .cancelled: return "查询已取消"
         case .network: return "无法连接服务，请检查网络后重试"
-        case .keychain: return "无法访问此组件的钥匙串项目，请重新保存密钥"
+        case .keychain: return "无法访问此账号的钥匙串项目，请重新保存密钥或导入登录"
         case .http(let status): return "服务暂时不可用（HTTP \(status)）"
         }
     }

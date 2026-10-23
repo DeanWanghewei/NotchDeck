@@ -1,42 +1,47 @@
 # GLM / ChatGPT · Codex 订阅额度
 
-“订阅额度”是插件市场的首个可选插件，展示 GLM Coding Plan 和 ChatGPT 订阅关联的 Codex 使用率，全新安装时未添加。它与 API 账户现金余额、ChatGPT 网页聊天消息上限分开处理。
+“订阅额度”是插件市场的可选插件，展示多个 GLM Coding Plan 和 ChatGPT · Codex 账号的订阅用量，不代表 API 现金余额或 ChatGPT 网页聊天消息上限。
 
-## 先看效果
+## 展示与账号管理
 
-在设置 → **插件市场** 中找到 **订阅额度**，点击“添加插件”，即可进入组件设置并启用面板内容。首次添加为离线演示，GLM 和 Codex 各显示两条示例周期、已用/剩余百分比和重置时间；面板明确标注“演示数据”。演示不联网，不访问钥匙串或 Codex 登录。
+在设置 → **插件市场** 中添加 **订阅额度**。首次启用显示明确标注的离线演示，包含 GLM / Codex 各两个示例账号，不访问凭据或网络。添加自己的账号后，关闭“演示模式”才显示真实用量。
 
-组件设置的“布局与展示”可选择 **顶部常驻 / 标签页 / 底部常驻**，以及 **用量卡片 / 紧凑列表**；模块管理中也可修改。默认在标签页显示用量卡片。紧凑列表减少卡片留白和套餐说明，保留每个周期的用量条、已用/剩余数字、演示或错误状态，重置说明在对应行悬停查看。底部常驻位于标签页下方，随内容滚动；切换位置和样式不重新查询账号。
+“布局与展示”支持 **顶部常驻 / 标签页 / 底部常驻**，以及 **百分比长条 / 百分比圆环 / 紧凑长条**。长条和圆环均显示已用及剩余数字、周期、重置说明，使用同一冷→暖色标。紧凑长条的重置时间可悬停查看。切换样式和位置不重新查询账号；旧版 `cards` / `compact` 配置继续有效。
 
-在市场中可移除插件，停止采集并隐藏模块/设置入口。移除保留配置与密钥，重新添加会恢复；如需删除 GLM 密钥，请先在组件设置中点击“移除密钥”。升级前已配置该组件的用户会自动保留添加状态。插件目录和维护方式见 [marketplace/README.md](../marketplace/README.md)。
+组件设置 → **添加账号** 可多次添加 GLM 或 Codex。别名可留空，未命名时自动显示“GLM 账号 1”“Codex 账号 2”等名称；身份由内部稳定 id 区分，相同别名也不会串用数据。每个账号可以单独停用、编辑或移除，修改别名不重启查询。
 
-进入设置 → 订阅额度，关闭“演示模式”后才查询真实账户。两个服务独立连接；尚未连接的卡片保留引导和官方用量页入口。
+删除账号会移除本软件保存的对应凭据，其他账号与原始 auth.json 不受影响。在市场中移除整个插件则只停止运行并保留配置和凭据，重新添加可恢复。
 
 ## GLM Coding Plan
 
-在组件设置中输入 Coding Plan 密钥，点击“保存并连接”。密钥仅保存到本机钥匙串的 `com.notchdeck.app.subscription-quota` 服务项目，不写入 UserDefaults、日志或命令参数。替换或移除密钥时取消旧查询并清除旧账户快照。
+添加账号时填写 Coding Plan 密钥，可选别名。每个密钥独立保存在本机钥匙串 `com.notchdeck.app.subscription-quota` 服务下，不写入 UserDefaults、日志或命令参数。编辑已有账号时，新密钥留空表示保留原密钥；替换时只取消该账号查询并清除其旧快照。
 
-真实查询采用智谱官方 [glm-plan-usage 插件](https://github.com/zai-org/zai-coding-plugins/tree/main/plugins/glm-plan-usage) 的只读接口 `GET https://open.bigmodel.cn/api/monitor/usage/quota/limit`，Authorization 与官方脚本保持一致。客户端固定目标主机，禁用重定向与 Cookie，响应限制 256 KiB，最长 15 秒；不会调用模型推理接口。
+采用智谱官方 [glm-plan-usage 插件](https://github.com/zai-org/zai-coding-plugins/tree/main/plugins/glm-plan-usage) 的只读接口 `GET https://open.bigmodel.cn/api/monitor/usage/quota/limit`。固定中国区主机，禁用重定向与 Cookie，响应上限 256 KiB、最长 15 秒，不调用模型推理。
 
-当前只接入中国区 `open.bigmodel.cn`。GLM 实时数据依照接口已确认的 `TOKENS_LIMIT` / `TIME_LIMIT` 和 `percentage` 显示“编码额度”/“工具调用”。官方脚本尚无稳定的新版周期、周额度与重置字段契约，所以不会把未知数据强行标成“5 小时/每周”，也不会估算重置时间；完整周期以[官方用量页](https://www.bigmodel.cn/coding-plan/personal/usage)为准。官方套餐周期说明见[套餐概览](https://docs.bigmodel.cn/cn/coding-plan/overview)。
+依照接口已确认的 `TOKENS_LIMIT` / `TIME_LIMIT` 和 `percentage` 显示“编码额度”/“工具调用”。当前没有稳定的周期、周额度与重置字段契约，不猜测“5 小时/每周”或估算重置时间；完整周期以[官方用量页](https://www.bigmodel.cn/coding-plan/personal/usage)为准。未带凭据的探针返回 HTTP 200 + 业务码 1001，客户端同时检查业务结果，不将认证失败显示为零用量。
 
-未带凭据的接口探针实测返回 HTTP 200、业务码 1001，组件同时校验业务结果，不把认证失败当成零用量。当前没有真实 GLM 密钥完成端到端额度核验；解析与错误状态用官方字段构造的固定数据测试。
+## Codex：导入、验证与独立保存
 
-## ChatGPT · Codex
+添加 Codex 账号时，输入或选择该账号的 **auth.json 文件路径**，支持 `~/`、空格及自定义 JSON 文件名。文件需来自 Codex CLI 的 ChatGPT 登录，API Key 登录不能查询订阅额度；可在多份账号备份中分别选择。
 
-开启“使用本机 Codex 的 ChatGPT 登录”。需已在 Codex CLI 中通过 ChatGPT 账号登录；API Key 登录不能读取订阅额度。NotchDeck 不触发登录、退出登录或切换账号，也不复制 `auth.json` 中的凭据。
+点击 **验证并保存** 后：
 
-组件自动查找 Homebrew / `/usr/local/bin` / `~/.local/bin` 的 Codex，以及 Codex.app / ChatGPT.app 常见内置 CLI 位置。找不到或存在多套登录环境时，在设置中填入希望使用的 **Codex CLI 可执行文件绝对路径**，点击“应用路径”。路径不会作为 shell 命令解析。
+1. 后台读取指定文件，校验 JSON 和 ChatGPT token 基本结构，上限 256 KiB。
+2. 将登录放入权限为 0700 的独立临时 `CODEX_HOME`，auth.json 权限为 0600；强制使用 `cli_auth_credentials_store="file"`，避免回退到当前 CLI 登录或其他账号的钥匙串。临时环境不复制原目录的配置。
+3. 用临时 `codex app-server` 完成握手，查询 `account/rateLimits/read`。不创建聊天，不执行工具或调用模型；CLI 自身可能在初始化时读取官方模型/插件目录。
+4. **额度验证成功后**，才把该账号登录保存到 NotchDeck 的独立钥匙串项目，账号元数据另行持久化。失败或取消不会添加账号或替换已保存的登录。
+5. 后续从钥匙串恢复登录，在隔离环境中查询；CLI 刷新后的 token 保存回同一账号，临时目录随后删除。
 
-每次查询启动临时 `codex app-server`，完成 `initialize` / `initialized` 后仅请求 `account/rateLimits/read`，不创建聊天、执行工具或消耗模型额度。协议见 [OpenAI 官方 App Server 文档](https://learn.chatgpt.com/docs/app-server)。实机使用 codex-cli `0.163.0-alpha.11` 验证握手；本机当前为非 ChatGPT 认证，已确认能正确返回并展示登录提示，尚未核验真实订阅数值。
+因此，切换 Codex 当前账号、移动或删除导入文件、重启 NotchDeck，都不会改变已保存的账号。源文件不被修改，也不需要持续存在。重新导入新文件可以更新某个账号的登录；登录被撤销或过期且无法刷新时，会提示重新导入。网页登录的官方用量页可能使用另一账号，需要自行核对。
 
-面板优先取 `rateLimitsByLimitId.codex`，兼容旧版 `rateLimits`。周期名称来自 `windowDurationMins`，重置来自 `resetsAt`，不会假设所有套餐固定为 5 小时或每周。独立模型/代码审查的限额不混入主额度。官方额度查看说明见 [Codex Pricing](https://learn.chatgpt.com/docs/pricing#where-can-i-see-my-current-usage-limits)。
+组件自动查找 Homebrew、`/usr/local/bin`、`~/.local/bin`、Codex.app / ChatGPT.app 常见 CLI 路径，也可填写可执行文件路径，路径不作为 shell 命令解析。旧版跟随本机 CLI 登录的账号会保留并标记；编辑它并导入 auth.json 后才固定为独立保存的账号。
 
-## 刷新与失败状态
+凭据存储依据 [OpenAI 官方 Authentication 文档](https://developers.openai.com/codex/auth/)，额度协议见 [App Server 文档](https://developers.openai.com/codex/app-server/)。面板优先使用 `rateLimitsByLimitId.codex`，兼容旧版 `rateLimits`；周期来自 `windowDurationMins`，重置来自 `resetsAt`，不混入独立模型或代码审查限额。
 
-- 真实查询在组件启用后每 5 分钟更新；展开面板时距上次查询至少 60 秒才补刷新，也可手动刷新。
-- 同一服务不重叠查询。停用、切换演示模式、更换配置或退出应用时取消在途任务；旧回调不能覆盖新状态。
-- 查询失败保留当前账户上次成功的数值，并显示错误与上次更新时间；首次失败显示错误引导，不显示虚构的 0%。周期已到只提示“等待刷新”，不自行把额度恢复为满额。
-- CLI 查询硬超时 12 秒，输出限制 256 KiB，结束后回收本次子进程。GLM 与 Codex 独立更新，一个失败不阻断另一个。
+## 刷新、迁移与验证边界
 
-`Tests/SubscriptionQuotaTests.swift` 覆盖固定响应解析、主额度选择、缺失/认证失败、已用/剩余换算、CLI 握手/超时/取消/输出上限，以及离线演示、密钥替换和旧回调失效。测试使用临时偏好域、内存凭据存储与模拟 CLI，不接触真实账号。
+- 启用后每 5 分钟刷新；展开面板时距上次查询至少 60 秒才补刷新，也可手动刷新。最多同时查询三个账号，每个账号不重叠，单账号错误不阻断其他账号。
+- 停用、移除、更换凭据或切换模式会取消相应任务，旧回调不能覆盖新账号。失败保留该账号上次成功的数值及时间；首次失败不虚构 0%。
+- CLI 查询硬超时 12 秒，输出限制 256 KiB，结束或取消后回收子进程和临时凭据目录。
+- 旧版 GLM / Codex 开关自动迁移为账号；GLM 继续使用原钥匙串项目，迁移过程不读取凭据。新账号凭据按 id 隔离，UserDefaults 仅保存别名、启用状态和登录是否已导入等元数据。
+- 解析、隔离目录、原文件不变、删除源文件后恢复查询、token 轮换、多账号并发、别名与旧配置迁移均有固定数据或模拟 CLI 测试。测试不使用真实账号；目前尚未使用有效 GLM 密钥或 ChatGPT 订阅登录核验端到端实时数值。

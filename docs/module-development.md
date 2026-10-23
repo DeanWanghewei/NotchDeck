@@ -47,8 +47,9 @@ static let descriptor = ModuleDescriptor(
     presentation: ModulePresentationOptions(
         placements: [.top, .tab, .bottom],
         displayModes: [
-            ModuleDisplayMode(id: "cards", title: "用量卡片"),
-            ModuleDisplayMode(id: "compact", title: "紧凑列表"),
+            ModuleDisplayMode(id: "cards", title: "百分比长条"),
+            ModuleDisplayMode(id: "rings", title: "百分比圆环"),
+            ModuleDisplayMode(id: "compact", title: "紧凑长条"),
         ],
         showsSectionHeader: false // 视图已有标题，避免常驻区域重复展示标题
     )
@@ -75,7 +76,7 @@ static let descriptor = ModuleDescriptor(
 // presentation.displayModeID：本次实际样式，如 "cards" / "compact"
 ```
 
-在视图中按样式 id 组织卡片、列表、数字、曲线或热力图；必须实现自己声明的每种样式。参考 `UI/SubscriptionQuotaView.swift`：两种展示复用同一数据与采集器，紧凑列表保留已用/剩余数字和用量条，重置说明通过悬停查看。更改区域、样式和顺序不会重新启动采集。百分比、冷暖色标、缺失值仍须遵循 [design-conventions.md](design-conventions.md)，不能由样式覆盖数据语义。
+在视图中按样式 id 组织卡片、列表、数字、曲线或热力图；必须实现自己声明的每种样式。参考 `UI/SubscriptionQuotaView.swift`：长条、圆环和紧凑长条复用同一份多账号数据与采集器，圆环中心直接显示已用百分比，紧凑样式保留已用/剩余数字和用量条，重置说明通过悬停查看。更改区域、样式和顺序不会重新启动采集。百分比、冷暖色标、缺失值仍须遵循 [design-conventions.md](design-conventions.md)，不能由样式覆盖数据语义。
 
 GitHub 目录用于介绍这些能力；运行时以应用随附插件的声明与实现为准，刷新 JSON 不会增添新的布局代码或视图。
 
