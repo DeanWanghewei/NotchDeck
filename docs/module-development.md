@@ -76,7 +76,7 @@ static let descriptor = ModuleDescriptor(
 // presentation.displayModeID：本次实际样式，如 "cards" / "compact"
 ```
 
-在视图中按样式 id 组织卡片、列表、数字、曲线或热力图；必须实现自己声明的每种样式。参考 `UI/SubscriptionQuotaView.swift`：长条、圆环和紧凑长条复用同一份多账号数据与采集器，圆环中心直接显示已用百分比，紧凑样式保留已用/剩余数字和用量条，重置说明直接展示。更改区域、样式和顺序不会重新启动采集。百分比、冷暖色标、缺失值仍须遵循 [design-conventions.md](design-conventions.md)，不能由样式覆盖数据语义。
+在视图中按样式 id 组织卡片、列表、数字、曲线或热力图；必须实现自己声明的每种样式。参考 `UI/SubscriptionQuotaView.swift`：长条、圆环和紧凑长条复用同一份多账号数据与采集器，GLM 同心圆右侧逐项显示已用百分比，Codex 独立圆环中心显示已用百分比，紧凑样式保留已用/剩余数字和用量条，重置说明直接展示。更改区域、样式和顺序不会重新启动采集。百分比、冷暖色标、缺失值仍须遵循 [design-conventions.md](design-conventions.md)，不能由样式覆盖数据语义。
 
 GitHub 目录用于介绍这些能力；运行时以应用随附插件的声明与实现为准，刷新 JSON 不会增添新的布局代码或视图。
 
@@ -138,3 +138,7 @@ xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck \
 指标判断可复用 `ThresholdAlertGate`：按指标 key、阈值、服务返回的周期时间去重；无周期时先降到阈值以下再重新触发。投递失败调用 `retry(key:)` 允许后续采样重试。门控状态保存在当前模块实例中，重启应用或移除再添加插件后可再次提醒。测试注入 `AppNotificationSending` 替身，不申请权限、不发送真实通知。
 
 订阅界面自渲染可通过 `TEST_RUNNER_NOTCHDECK_RENDER_DIR=/tmp/notchdeck-quota-render xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test` 复现。使用模拟数据、`NSHostingView` 与 `cacheDisplay`，不启动主应用或请求录屏权限。
+
+圆环样式中，同服务账号按原顺序两两配对，服务组按首次出现顺序排列。内容宽度至少 428pt 时每行两张卡片（最小 210pt、间距 8pt），奇数个账号的末项单独占一行；窄窗口回退单列。双列 GLM 卡片采用上方同心圆、下方明细；双列 Codex 采用纵向独立额度圆环，更新时间保留在卡片底部。长条与紧凑长条维持单列。
+
+展示动画使用首次 0.2 秒淡入、账号增删 0.2 秒布局过渡、用量图形 0.35 秒缓动；数字始终显示实际读数，不使用循环动画。开启系统“减少动态效果”时关闭上述动画，直接呈现结果。

@@ -580,6 +580,31 @@ final class SubscriptionQuotaTests: XCTestCase {
         }
     }
 
+    func testGLMRingLayersFollowPeriodsRegardlessOfResponseOrder() {
+        let windows: [SubscriptionQuotaWindow] = [
+            .init(id: "tool", title: "工具调用", usedPercent: 100, resetsAt: nil),
+            .init(id: "unknown", title: "编码额度", usedPercent: 105, resetsAt: nil),
+            .init(id: "weekly", title: "每周", usedPercent: 42, resetsAt: nil),
+            .init(id: "short", title: "5 小时", usedPercent: 0, resetsAt: nil),
+        ]
+        let ordered = SubscriptionQuotaView.orderedGLMWindows(windows)
+        XCTAssertEqual(ordered.map(\.id), ["short", "weekly", "tool", "unknown"])
+        XCTAssertEqual(SubscriptionQuotaView.orderedGLMWindows(windows.reversed()), ordered)
+        XCTAssertEqual(ordered.map(\.usedPercent), [0, 42, 100, 105])
+        XCTAssertEqual(SubscriptionQuotaView.orderedGLMWindows([]), [])
+    }
+
+    func testAccountRowsPairOnlySameProvidersAndKeepOddAccounts() {
+        let accounts = [SubscriptionAccount(id: "c1", provider: .codex),
+                        SubscriptionAccount(id: "g1", provider: .glm),
+                        SubscriptionAccount(id: "c2", provider: .codex),
+                        SubscriptionAccount(id: "g2", provider: .glm),
+                        SubscriptionAccount(id: "g3", provider: .glm)]
+        XCTAssertEqual(SubscriptionQuotaView.accountRows(accounts).map { $0.map(\.id) },
+                       [["c1", "c2"], ["g1", "g2"], ["g3"]])
+        XCTAssertTrue(SubscriptionQuotaView.accountRows([]).isEmpty)
+    }
+
     @MainActor
     func testRenderSubscriptionViewsWhenRequested() throws {
         guard let directory = ProcessInfo.processInfo.environment["NOTCHDECK_RENDER_DIR"] else { return }
@@ -599,17 +624,25 @@ final class SubscriptionQuotaTests: XCTestCase {
             client.glm.forEach { $0.completion(.success(snapshot)) }
             settle()
             for dark in [false, true] {
-                for mode in ["cards", "rings", "compact", "settings"] {
+                for mode in ["cards", "rings", "rings-narrow", "compact", "settings"] {
+                    let renderWidth: CGFloat = mode == "rings-narrow" ? 360 : 480
                     let view: AnyView = mode == "settings" ?
                         AnyView(Form { SubscriptionQuotaSettingsView(module: module, preferences: module.preferences) }.formStyle(.grouped)) :
                         AnyView(SubscriptionQuotaView(module: module, preferences: module.preferences)
-                            .environment(\.modulePresentation, .init(placement: .tab, displayModeID: mode)))
-                    let host = NSHostingView(rootView: view.padding(16).frame(width: 480, height: 540, alignment: .topLeading)
+                            .environment(\.modulePresentation, .init(placement: .tab, displayModeID: mode == "rings-narrow" ? "rings" : mode)))
+                    let host = NSHostingView(rootView: view.padding(16).frame(width: renderWidth, height: 540, alignment: .topLeading)
                         .background(dark ? Color.black : Color.white).environment(\.colorScheme, dark ? .dark : .light))
-                    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 540), styleMask: [.borderless], backing: .buffered, defer: false)
+                    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: renderWidth, height: 540), styleMask: [.borderless], backing: .buffered, defer: false)
                     window.contentView = host
                     window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    // 屏幕外呈现窗口，让 onAppear 与有限动画完成后再缓存，避免截到初始透明帧。
+                    window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
+                    window.orderFront(nil)
+                    let rendered = expectation(description: "等待入场动画完成")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { rendered.fulfill() }
+                    wait(for: [rendered], timeout: 2)
                     host.layoutSubtreeIfNeeded()
+                    defer { window.orderOut(nil) }
                     guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { XCTFail("无法渲染"); continue }
                     host.cacheDisplay(in: host.bounds, to: rep)
                     let path = directory + "/subscriptions-" + mode + (dark ? "-dark.png" : "-light.png")
