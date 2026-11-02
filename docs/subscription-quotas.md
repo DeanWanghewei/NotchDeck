@@ -26,7 +26,7 @@
 
 采用智谱官方 [glm-plan-usage 插件](https://github.com/zai-org/zai-coding-plugins/tree/main/plugins/glm-plan-usage) 的只读接口 `GET https://open.bigmodel.cn/api/monitor/usage/quota/limit`。固定中国区主机，禁用重定向与 Cookie，响应上限 256 KiB、最长 15 秒，不调用模型推理。
 
-依照接口已确认的 `TOKENS_LIMIT` / `TIME_LIMIT` 和 `percentage` 显示“编码额度”/“工具调用”。根据 `unit=3, number=5` 识别“5 小时”、`unit=6, number=1` 识别“每周”，不依赖返回顺序；此映射参考公开 CodexBar Z.ai 实现及用户确认的双窗口含义。未知周期保留“编码额度”并按需编号，只对完整原始对象完全相同的数据去重，不估算重置时间；完整周期以[官方用量页](https://www.bigmodel.cn/coding-plan/personal/usage)为准。未带凭据的探针返回 HTTP 200 + 业务码 1001，客户端同时检查业务结果，不将认证失败显示为零用量。
+依照接口已确认的 `TOKENS_LIMIT` / `TIME_LIMIT` 和 `percentage` 显示“编码额度”/“工具调用”。根据 `unit=3, number=5` 识别“5 小时”、`unit=6, number=1` 识别“每周”，不依赖返回顺序；此映射参考公开 CodexBar Z.ai 实现及用户确认的双窗口含义。未知周期保留“编码额度”并按需编号，只对完整原始对象完全相同的数据去重。重置时间直接读取条目的 `nextResetTime`（已实证形态：epoch 毫秒数字与 RFC3339 字符串，兼容数字字符串与按秒计的值；依据 zai-org/ZCode、Raycast agent-usage、zai-rs 等公开实现的响应样本），字段缺失或无法解析时显示“服务未提供重置时间”，不估算、不调用模型推理、不解析 429 错误文本；完整周期以[官方用量页](https://www.bigmodel.cn/coding-plan/personal/usage)为准。未带凭据的探针返回 HTTP 200 + 业务码 1001，客户端同时检查业务结果，不将认证失败显示为零用量。
 
 ## Codex：粘贴 JSON、验证与独立保存
 

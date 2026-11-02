@@ -87,27 +87,61 @@ enum SubscriptionQuotaParser {
         let rawPayload = raw?["data"] as? [String: Any] ?? raw
         let rawLimits = rawPayload?["limits"] as? [NSDictionary] ?? []
         var seen: [NSDictionary] = []
-        var limits: [Limit] = []
+        // 去重会跳过部分条目，过滤后的下标不再对应原始数组，须与原始对象一并携带，
+        // 否则 nextResetTime 会错配到别的窗口。
+        var kept: [(limit: Limit, raw: NSDictionary?)] = []
         for (index, limit) in payload.limits.enumerated() {
             guard ["TOKENS_LIMIT", "TIME_LIMIT"].contains(limit.type),
                   let percent = limit.percentage, percent.isFinite, percent >= 0 else { continue }
-            if index < rawLimits.count {
-                let object = rawLimits[index]
+            let object = index < rawLimits.count ? rawLimits[index] : nil
+            if let object {
                 if seen.contains(where: { $0.isEqual(object) }) { continue }
                 seen.append(object)
             }
-            limits.append(limit)
+            kept.append((limit, object))
         }
-        let windows = limits.enumerated().map { index, limit in
-            let base = limit.title
-            let siblings = limits.filter { $0.title == base }
-            let ordinal = limits.prefix(index + 1).filter { $0.title == base }.count
+        let windows = kept.enumerated().map { index, entry in
+            let base = entry.limit.title
+            let siblings = kept.filter { $0.limit.title == base }
+            let ordinal = kept.prefix(index + 1).filter { $0.limit.title == base }.count
             let title = siblings.count > 1 ? "\(base) \(ordinal)" : base
-            return SubscriptionQuotaWindow(id: "\(limit.type)-\(index)", title: title, usedPercent: limit.percentage!)
+            let reset = entry.raw.flatMap { Self.glmResetTime($0["nextResetTime"]) }
+            return SubscriptionQuotaWindow(id: "\(entry.limit.type)-\(index)", title: title,
+                                           usedPercent: entry.limit.percentage!, resetsAt: reset)
         }
         guard !windows.isEmpty else { throw SubscriptionQuotaError.invalidResponse }
         return SubscriptionQuotaSnapshot(plan: payload.level, windows: windows, fetchedAt: now)
     }
+
+    /// 重置时间直接来自条目的 nextResetTime，不调用推理接口、不从 429 错误文本估算。
+    /// 已实证形态（zai-org/ZCode、Raycast agent-usage、zai-rs 等公开实现的响应样本）：
+    /// epoch 毫秒数字与 RFC3339 字符串，另有数字字符串与按秒计的数字；
+    /// ≥1e10 视为毫秒、否则按秒，超出合理年代范围或无法解析一律视为未提供。
+    static func glmResetTime(_ value: Any?) -> Date? {
+        let numeric: Double?
+        switch value {
+        case is Bool: return nil
+        case let number as NSNumber: numeric = number.doubleValue
+        case let text as String:
+            if let date = glmDateFormatters.compactMap({ $0.date(from: text) }).first { return date }
+            numeric = Double(text.trimmingCharacters(in: .whitespaces))
+        default: return nil
+        }
+        guard let numeric, numeric.isFinite, numeric > 0 else { return nil }
+        let seconds = numeric >= 10_000_000_000 ? numeric / 1000 : numeric
+        // 上限取 2100 年之前，防止把任意大数字当成有效重置时刻。
+        guard seconds < 4_102_444_800 else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    /// ISO8601DateFormatter 线程安全；需两个实例分别覆盖带与不带小数秒的 RFC3339。
+    private static let glmDateFormatters: [ISO8601DateFormatter] = {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let base = ISO8601DateFormatter()
+        base.formatOptions = [.withInternetDateTime]
+        return [fractional, base]
+    }()
 
     static func codex(_ data: Data, now: Date = Date()) throws -> SubscriptionQuotaSnapshot {
         struct Window: Decodable { let usedPercent: Double; let windowDurationMins: Int?; let resetsAt: Double? }

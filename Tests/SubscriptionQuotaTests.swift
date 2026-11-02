@@ -48,6 +48,35 @@ final class SubscriptionQuotaTests: XCTestCase {
         XCTAssertEqual(try SubscriptionQuotaParser.glm(unknown).windows.count, 2)
     }
 
+    func testGLMReadsResetTimeFromConfirmedEndpointForms() throws {
+        // 形态样本取自公开实现（zai-org/ZCode、Raycast agent-usage、zai-rs）的真实响应：
+        // epoch 毫秒数字、RFC3339 字符串、数字字符串（按秒计）。
+        let data = Data(#"{"limits":[{"type":"TOKENS_LIMIT","percentage":28,"unit":3,"number":5,"nextResetTime":1781778751996},{"type":"TOKENS_LIMIT","percentage":60,"unit":6,"number":1,"nextResetTime":"2026-06-22T00:00:00Z"},{"type":"TIME_LIMIT","percentage":12,"nextResetTime":"1781778751.996"}]}"#.utf8)
+        let snapshot = try SubscriptionQuotaParser.glm(data)
+        XCTAssertEqual(snapshot.windows.map(\.title), ["5 小时", "每周", "工具调用"])
+        XCTAssertEqual(snapshot.windows[0].resetsAt, Date(timeIntervalSince1970: 1_781_778_751.996))
+        XCTAssertEqual(snapshot.windows[1].resetsAt, Date(timeIntervalSince1970: 1_782_086_400))
+        XCTAssertEqual(snapshot.windows[2].resetsAt, Date(timeIntervalSince1970: 1_781_778_751.996))
+    }
+
+    func testGLMIgnoresUnusableResetTimeValuesWithoutDroppingWindows() throws {
+        for value in ["null", "0", "-5", "1e300", "true", #""abc""#, #""2026-13-99T99:99:99Z""#, #""""#] {
+            let data = Data(#"{"limits":[{"type":"TOKENS_LIMIT","percentage":28,"unit":3,"number":5,"nextResetTime":\#(value)}]}"#.utf8)
+            let snapshot = try SubscriptionQuotaParser.glm(data)
+            XCTAssertEqual(snapshot.windows.count, 1)
+            XCTAssertNil(snapshot.windows[0].resetsAt, "值 \(value) 不应产生重置时间")
+        }
+    }
+
+    func testGLMDuplicateRemovalKeepsResetTimeAlignedToFirstEntry() throws {
+        let duplicate = #"{"type":"TIME_LIMIT","percentage":12,"nextResetTime":1781778751996}"#
+        let data = Data(#"{"limits":[{"type":"TOKENS_LIMIT","percentage":28},{"type":"TOKENS_LIMIT","percentage":28},\#(duplicate),\#(duplicate)]}"#.utf8)
+        let snapshot = try SubscriptionQuotaParser.glm(data)
+        XCTAssertEqual(snapshot.windows.map(\.title), ["编码额度", "工具调用"])
+        XCTAssertNil(snapshot.windows[0].resetsAt)
+        XCTAssertEqual(snapshot.windows[1].resetsAt, Date(timeIntervalSince1970: 1_781_778_751.996))
+    }
+
     func testPastedJSONErrorsAreSpecificAndDoNotExposeCredentials() throws {
         let cases: [(String, SubscriptionQuotaError)] = [
             ("/tmp/auth.json", .invalidAuthJSON),
