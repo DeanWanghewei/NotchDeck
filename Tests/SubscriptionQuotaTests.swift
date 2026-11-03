@@ -77,6 +77,49 @@ final class SubscriptionQuotaTests: XCTestCase {
         XCTAssertEqual(snapshot.windows[1].resetsAt, Date(timeIntervalSince1970: 1_781_778_751.996))
     }
 
+    func testRemainingDurationUsesMinuteGranularity() {
+        let now = Date(timeIntervalSince1970: 1_782_086_400)
+        func window(seconds: TimeInterval) -> SubscriptionQuotaWindow {
+            SubscriptionQuotaWindow(id: "w", title: "5 小时", usedPercent: 28,
+                                    resetsAt: seconds == 0 ? nil : now.addingTimeInterval(seconds))
+        }
+        XCTAssertNil(window(seconds: -30).remainingDuration(now: now))
+        XCTAssertEqual(window(seconds: 15).remainingDuration(now: now), "1 分钟")
+        XCTAssertEqual(window(seconds: 59 * 60 + 59).remainingDuration(now: now), "59 分钟")
+        XCTAssertEqual(window(seconds: 3600).remainingDuration(now: now), "1 小时")
+        XCTAssertEqual(window(seconds: 2 * 3600 + 5 * 60).remainingDuration(now: now), "2 小时 5 分钟")
+        XCTAssertEqual(window(seconds: 2 * 86_400).remainingDuration(now: now), "2 天")
+        XCTAssertEqual(window(seconds: 2 * 86_400 + 3 * 3600 + 17 * 60).remainingDuration(now: now), "2 天 3 小时")
+        XCTAssertNil(window(seconds: 0).remainingDuration(now: now))
+    }
+
+    func testResetDescriptionCombinesRemainingAndAbsoluteMoment() {
+        let now = Date(timeIntervalSince1970: 1_782_086_400)
+        let today = SubscriptionQuotaWindow(id: "w", title: "5 小时", usedPercent: 28,
+                                            resetsAt: now.addingTimeInterval(3300))
+        let line = today.resetDescription(now: now)
+        XCTAssertTrue(line.hasPrefix("还剩 55 分钟 · "))
+        XCTAssertTrue(line.hasSuffix(" 重置"))
+        let crossDay = SubscriptionQuotaWindow(id: "w", title: "每周", usedPercent: 38,
+                                               resetsAt: now.addingTimeInterval(2 * 86_400 + 3600))
+        XCTAssertTrue(crossDay.resetDescription(now: now).hasPrefix("还剩 2 天 1 小时 · "))
+        XCTAssertEqual(SubscriptionQuotaWindow(id: "w", title: "每周", usedPercent: 38,
+                                               resetsAt: now.addingTimeInterval(-1))
+            .resetDescription(now: now), "周期已到，等待刷新")
+        XCTAssertEqual(SubscriptionQuotaWindow(id: "w", title: "每周", usedPercent: 38, resetsAt: nil)
+            .resetDescription(now: now), "服务未提供重置时间")
+    }
+
+    func testResetHelpDescriptionKeepsAbsoluteMoment() {
+        let now = Date(timeIntervalSince1970: 1_782_086_400)
+        let window = SubscriptionQuotaWindow(id: "w", title: "每周", usedPercent: 38, resetsAt: now.addingTimeInterval(3300))
+        XCTAssertTrue(window.resetHelpDescription(now: now).hasPrefix("还剩 55 分钟，重置于 "))
+        let expired = SubscriptionQuotaWindow(id: "w", title: "每周", usedPercent: 38, resetsAt: now.addingTimeInterval(-1))
+        XCTAssertEqual(expired.resetHelpDescription(now: now), "周期已到，等待刷新")
+        let missing = SubscriptionQuotaWindow(id: "w", title: "每周", usedPercent: 38, resetsAt: nil)
+        XCTAssertEqual(missing.resetHelpDescription(now: now), "服务未提供重置时间")
+    }
+
     func testPastedJSONErrorsAreSpecificAndDoNotExposeCredentials() throws {
         let cases: [(String, SubscriptionQuotaError)] = [
             ("/tmp/auth.json", .invalidAuthJSON),
@@ -646,8 +689,10 @@ final class SubscriptionQuotaTests: XCTestCase {
             module.start()
             defer { module.stop() }
             let snapshot = SubscriptionQuotaSnapshot(plan: "Pro", windows: [
-                .init(id: "short", title: "5 小时", usedPercent: 100, resetsAt: Date().addingTimeInterval(3600)),
-                .init(id: "weekly", title: "每周", usedPercent: 38, resetsAt: nil),
+                .init(id: "short", title: "5 小时", usedPercent: 100,
+                      resetsAt: Date().addingTimeInterval(3600)),
+                .init(id: "weekly", title: "每周", usedPercent: 38,
+                      resetsAt: Date().addingTimeInterval(2 * 86_400 + 3 * 3600)),
                 .init(id: "extra", title: "工具调用", usedPercent: 0, resetsAt: Date().addingTimeInterval(-60)),
             ], fetchedAt: Date())
             client.glm.forEach { $0.completion(.success(snapshot)) }

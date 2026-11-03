@@ -181,12 +181,12 @@ struct SubscriptionQuotaView: View {
                                             .foregroundStyle(window.fraction >= 0.7 ? HeatScale.color(window.fraction) : .secondary)
                                             .fixedSize()
                                     }
-                                    Text(resetDescription(window)).font(.system(size: 9)).foregroundStyle(.secondary)
+                                    resetText(window).font(.system(size: 9)).foregroundStyle(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
                             .accessibilityElement(children: .ignore)
-                            .accessibilityLabel("\(window.title)，已用 \(window.usedPercent.formatted())%，剩余 \(window.remainingPercent.formatted())%，\(resetDescription(window))")
+                            .accessibilityLabel("\(window.title)，已用 \(window.usedPercent.formatted())%，剩余 \(window.remainingPercent.formatted())%，\(window.resetDescription())")
                         }
                     }
                 }
@@ -212,9 +212,9 @@ struct SubscriptionQuotaView: View {
                     .foregroundStyle(window.fraction >= 0.7 ? HeatScale.color(window.fraction) : .secondary)
                     .frame(width: 104, alignment: .trailing)
             }
-            Text(resetDescription(window)).font(.system(size: 10)).foregroundStyle(.secondary)
+            resetText(window).font(.system(size: 10)).foregroundStyle(.secondary)
         }
-        .accessibilityLabel("\(window.title)，已用 \(window.usedPercent.formatted())%，剩余 \(window.remainingPercent.formatted())%，\(resetDescription(window))")
+        .accessibilityLabel("\(window.title)，已用 \(window.usedPercent.formatted())%，剩余 \(window.remainingPercent.formatted())%，\(window.resetDescription())")
     }
 
     private func ring(_ window: SubscriptionQuotaWindow) -> some View {
@@ -235,21 +235,25 @@ struct SubscriptionQuotaView: View {
                 Text(window.title).font(.system(size: 10)).lineLimit(1)
                 Text("余 \(window.remainingPercent, specifier: "%.0f")%")
                     .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
-                Text(resetDescription(window))
+                resetText(window)
                     .font(.system(size: 9)).foregroundStyle(.secondary).fixedSize()
             }
         }
-        .help(resetDescription(window))
+        .help(window.resetHelpDescription())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(window.title)，已用 \(window.usedPercent, specifier: "%.0f")%，剩余 \(window.remainingPercent, specifier: "%.0f")%，\(resetDescription(window))")
+        .accessibilityLabel("\(window.title)，已用 \(window.usedPercent, specifier: "%.0f")%，剩余 \(window.remainingPercent, specifier: "%.0f")%，\(window.resetDescription())")
     }
 
     private func openSettings() {
         NotificationCenter.default.post(name: AppModel.openSettingsRequest, object: module.id)
     }
 
-    private func resetDescription(_ window: SubscriptionQuotaWindow) -> String {
-        guard let reset = window.resetsAt else { return "服务未提供重置时间" }
-        return reset <= Date() ? "周期已到，等待刷新" : "重置 \(reset.formatted(.dateTime.month().day().hour().minute()))"
+    /// 重置行为纯文字“还剩 X · 绝对时刻 重置”：窗口时长各行不一（5 小时 / 每周），
+    /// 时间进度条的刻度无法跨行统一，且暖色临近重置时会与用量条的“额度告警”语义冲突；
+    /// 剩余时长随时间流逝本地刷新（分钟粒度），不触发新的额度查询。
+    private func resetText(_ window: SubscriptionQuotaWindow) -> some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            Text(window.resetDescription(now: context.date))
+        }
     }
 }

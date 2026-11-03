@@ -24,6 +24,41 @@ struct SubscriptionQuotaSnapshot: Equatable {
 
 }
 
+extension SubscriptionQuotaWindow {
+    /// 距重置的剩余时长（分钟粒度），供文字与悬浮提示共用。
+    func remainingDuration(now: Date = Date()) -> String? {
+        guard let reset = resetsAt else { return nil }
+        let remaining = reset.timeIntervalSince(now)
+        // 不足一分钟按 1 分钟显示，避免与“已到期”之间来回跳。
+        let minutes = remaining > 0 ? max(1, Int(remaining / 60)) : 0
+        guard minutes > 0 else { return nil }
+        if minutes < 60 { return "\(minutes) 分钟" }
+        if minutes < 1440 {
+            let (hours, rest) = (minutes / 60, minutes % 60)
+            return rest == 0 ? "\(hours) 小时" : "\(hours) 小时 \(rest) 分钟"
+        }
+        let (days, hours) = (minutes / 1440, minutes % 1440 / 60)
+        return hours == 0 ? "\(days) 天" : "\(days) 天 \(hours) 小时"
+    }
+
+    /// 行内重置说明：剩余时长与绝对时间点同现，便于直接对照官方用量页；
+    /// 今天的重置只显时分，跨天补月日。
+    func resetDescription(now: Date = Date(), calendar: Calendar = .current) -> String {
+        guard let reset = resetsAt else { return "服务未提供重置时间" }
+        guard let duration = remainingDuration(now: now) else { return "周期已到，等待刷新" }
+        let style: Date.FormatStyle = calendar.isDate(reset, inSameDayAs: now)
+            ? .dateTime.hour().minute() : .dateTime.month().day().hour().minute()
+        return "还剩 \(duration) · \(reset.formatted(style)) 重置"
+    }
+
+    /// 悬浮提示始终带月日，与行内（今天只显时分）互补。
+    func resetHelpDescription(now: Date = Date()) -> String {
+        guard let reset = resetsAt else { return "服务未提供重置时间" }
+        guard let duration = remainingDuration(now: now) else { return "周期已到，等待刷新" }
+        return "还剩 \(duration)，重置于 \(reset.formatted(.dateTime.month().day().hour().minute()))"
+    }
+}
+
 enum SubscriptionQuotaError: Error, Equatable {
     case invalidResponse, signInRequired, missingKey, missingCLI, timeout, cancelled, network, credentialStorage
     case authFileUnavailable, invalidAuthFile
