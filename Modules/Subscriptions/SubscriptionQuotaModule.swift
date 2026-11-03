@@ -20,6 +20,10 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
     @Published private(set) var settingsMessage: String?
     @Published private(set) var verifying = false
     @Published private(set) var active = false
+    /// 已安装市场脚本版本；nil 表示未安装（使用内置解析）。
+    @Published private(set) var scriptVersion: String?
+    /// 脚本请求/解析失败已回退内置解析的提示，仅用于设置页展示，不影响查询继续。
+    @Published private(set) var scriptDegraded = false
 
     var displayedAccounts: [SubscriptionAccount] {
         preferences.value.accounts.filter(\.enabled)
@@ -29,6 +33,9 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
     private var alertGate = ThresholdAlertGate()
     private let clients: SubscriptionQuotaClients
     private let secrets: SubscriptionSecretStore
+    private let scriptStore: PluginScriptStore
+    private var scriptSource: String?
+    private var scriptObserver: NSObjectProtocol?
     private var subscription: AnyCancellable?
     private var requests: [String: SubscriptionQuotaRequest] = [:]
     private var queryIDs: [String: UUID] = [:]
@@ -42,22 +49,34 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
 
     init(settings: SettingsStore = .shared, clients: SubscriptionQuotaClients = .live,
          secrets: SubscriptionSecretStore = SubscriptionFileSecretStore(),
+         scriptStore: PluginScriptStore = .shared,
          notifications: AppNotificationSending = AppNotificationService.shared) {
         preferences = settings.modulePreferences(for: Self.descriptor.id, default: SubscriptionQuotaPreferences())
         self.notifications = notifications
         self.clients = clients
         self.secrets = secrets
+        self.scriptStore = scriptStore
     }
 
     deinit {
         timer?.invalidate()
         requests.values.forEach { $0.cancel() }
         verificationRequest?.cancel()
+        if let scriptObserver { NotificationCenter.default.removeObserver(scriptObserver) }
     }
 
     func start() {
         guard !active else { return }
         active = true
+        reloadScript()
+        // 市场脚本更新后热加载并立即刷新，当场生效，不等 5 分钟周期。
+        // 发帖方恒在主线程，queue: nil 同步回执；object 过滤在块内做（沙箱 String object 匹配不可靠）。
+        scriptObserver = NotificationCenter.default.addObserver(
+            forName: .pluginScriptDidUpdate, object: nil, queue: nil) { [weak self] note in
+            guard note.object as? String == Self.descriptor.id else { return }
+            self?.reloadScript()
+            self?.refresh()
+        }
         subscription = preferences.$value.dropFirst().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.configure() }
         configure()
@@ -66,8 +85,42 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
     func stop() {
         active = false
         subscription = nil
+        if let scriptObserver {
+            NotificationCenter.default.removeObserver(scriptObserver)
+            self.scriptObserver = nil
+        }
         cancelAccountVerification()
         reset()
+    }
+
+    /// 读取磁盘脚本（含哈希复验）；损坏或被篡改按未安装处理，静默回退内置解析。
+    private func reloadScript() {
+        if let installed = scriptStore.installed(pluginID: Self.descriptor.id) {
+            scriptSource = installed.source
+            scriptVersion = installed.manifest.version
+        } else {
+            scriptSource = nil
+            scriptVersion = nil
+        }
+        scriptDegraded = false
+    }
+
+    /// 组装脚本适配器；停用开关、脚本缺失或请求声明不合法（含主机不在白名单）都返回 nil 走内置。
+    private func makeGLMAdapter() -> GLMAdapterConfiguration? {
+        guard !preferences.value.glmScriptDisabled, let source = scriptSource else { return nil }
+        guard let template = GLMScriptAdapter.request(from: source) else {
+            if !scriptDegraded { scriptDegraded = true }
+            return nil
+        }
+        return GLMAdapterConfiguration(url: template.url, headers: template.headers) { [weak self] data in
+            do { return try GLMScriptAdapter.parse(source: source, body: data) }
+            catch {
+                // 脚本失败不能挂掉组件：同一响应回退内置解析（认证失败等语义由内置解析再次判定），
+                // 成功则继续展示并在设置页提示已降级。
+                if let self { DispatchQueue.main.async { self.scriptDegraded = true } }
+                return try SubscriptionQuotaParser.glm(data)
+            }
+        }
     }
 
     private func invalidate(_ id: String) {
@@ -189,7 +242,7 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
                     guard let key = try secrets.readGLMKey(accountID: id), !key.isEmpty else {
                         completion(.failure(.missingKey)); continue
                     }
-                    requests[id] = clients.glm(key, completion)
+                    requests[id] = clients.glm(key, makeGLMAdapter(), completion)
                 case .codex:
                     guard let executable = CodexQuotaQuery.executable(override: preferences.value.codexExecutable) else {
                         completion(.failure(.missingCLI)); continue

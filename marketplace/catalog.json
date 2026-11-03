@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "plugins": [
     {
       "id": "subscriptions",
@@ -8,17 +8,23 @@
       "details": "在信息岛查看套餐已用与剩余额度、重置时间。支持多个 GLM Coding Plan 和 ChatGPT · Codex 账号及可选别名。Codex 登录文件验证后独立保存，切换本机账号不影响历史账号；添加账号后直接展示真实额度，支持自定义阈值的系统消息提醒。",
       "systemImage": "chart.bar.xaxis",
       "author": "NotchDeck",
-      "version": "1.1.6",
-      "minimumAppVersion": "0.21.6",
+      "version": "1.2.0",
+      "minimumAppVersion": "0.22.0",
       "capabilities": [
         "顶部常驻、标签页或底部常驻，百分比长条、圆环和紧凑长条可选，GLM 使用同心圆与逐项明细，同服务多账号支持自适应双列与轻量动画",
-        "直接显示重置时间，额度提醒阈值可设置为 1–100%",
+        "直接显示重置剩余时长与绝对时间点，额度提醒阈值可设置为 1–100%",
         "GLM / Codex 多账号、可选别名与独立启停",
         "GLM 密钥、已验证的 Codex 登录按账号加密保存到应用 Data 目录",
+        "GLM 解析脚本经插件市场在应用内更新，无需重装应用",
         "连接后每 5 分钟刷新，支持手动刷新"
       ],
       "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/docs/subscription-quotas.md",
-      "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Subscriptions"
+      "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Subscriptions",
+      "script": {
+        "url": "https://raw.githubusercontent.com/DeanWanghewei/NotchDeck/main/marketplace/scripts/subscriptions-glm.js",
+        "sha256": "d37cd3b552b1935f4005207862eb9cadb15256c4d1952ce9df93bf101ceab26a",
+        "version": "1.0.0"
+      }
     }
   ]
 }

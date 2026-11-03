@@ -39,13 +39,15 @@ struct PluginMarketplaceView: View {
                         Button("移除") { marketplace.remove(id) }
                     }.padding(18)
                 }
-                Text("新插件和版本升级通过更新 NotchDeck 获取。移除会停止插件运行，保留配置；GLM 密钥可在插件设置中单独删除。")
+                Text("解析脚本在应用内更新，无需重装；打开本页会自动检查（至少间隔 1 小时）。新插件和原生版本升级仍通过更新 NotchDeck 获取。移除会停止插件运行，保留配置与脚本；GLM 密钥可在插件设置中单独删除。")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(24).frame(maxWidth: 780, alignment: .leading).frame(maxWidth: .infinity)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        // 打开市场自动检查是静默的且受 1 小时节流；后台从不主动联网。
+        .onAppear { marketplace.refreshIfStale() }
     }
 
     private var header: some View {
@@ -124,11 +126,49 @@ private struct PluginMarketplaceCard: View {
                     Link("获取新版", destination: PluginCatalog.releasesURL).font(.caption)
                 }
             }
+            if installed { scriptRow }
             actions
         }
         .padding(18).frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 14).fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.primary.opacity(0.08)))
+    }
+
+    /// 脚本行只在已安装插件且目录声明了脚本时出现；更新是显式动作，安装后热加载立即生效。
+    @ViewBuilder
+    private var scriptRow: some View {
+        switch marketplace.scriptState(for: entry.id) {
+        case .none:
+            EmptyView()
+        case .notInstalled:
+            HStack {
+                Label("解析脚本：可从市场安装", systemImage: "doc.badge.arrow.up")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                if marketplace.updatingScript { ProgressView().controlSize(.mini) }
+                Button("安装脚本") { marketplace.updateScript(for: entry.id) }
+                    .disabled(marketplace.updatingScript)
+            }.help("脚本运行在无网络、无文件访问的沙箱中，仅负责响应解析；凭据仍由应用加密保管。")
+        case .installed(let version):
+            HStack {
+                Label("解析脚本 v\(version)", systemImage: "doc.text")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+            }.help("脚本运行在无网络、无文件访问的沙箱中，仅负责响应解析；凭据仍由应用加密保管。")
+        case .updatable(let current, let available):
+            HStack {
+                Label("解析脚本 v\(current) → v\(available)", systemImage: "arrow.triangle.2.circlepath.doc")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                if marketplace.updatingScript { ProgressView().controlSize(.mini) }
+                Button("更新脚本") { marketplace.updateScript(for: entry.id) }
+                    .disabled(marketplace.updatingScript)
+            }.help("更新在应用内完成并立即生效，无需重装应用。脚本经目录 sha256 校验后运行在无 I/O 沙箱中。")
+        }
+        if let message = marketplace.scriptMessage {
+            Text(message).font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var actions: some View {

@@ -31,7 +31,16 @@ final class SubscriptionQuotaRequest {
 }
 
 typealias SubscriptionQuotaCompletion = (Result<SubscriptionQuotaSnapshot, SubscriptionQuotaError>) -> Void
-typealias SubscriptionQuotaFetch = (String, @escaping SubscriptionQuotaCompletion) -> SubscriptionQuotaRequest
+
+/// 市场脚本产出的请求模板与解析函数；nil 表示使用内置端点与内置解析。
+/// headers 值中的 "{credential}" 占位由查询层发送时替换，脚本与模板本身不落密钥。
+struct GLMAdapterConfiguration {
+    let url: URL
+    let headers: [String: String]
+    let parse: (Data) throws -> SubscriptionQuotaSnapshot
+}
+
+typealias SubscriptionQuotaFetch = (String, GLMAdapterConfiguration?, @escaping SubscriptionQuotaCompletion) -> SubscriptionQuotaRequest
 
 enum CodexQuotaAuth {
     case localCLI
@@ -55,8 +64,8 @@ struct SubscriptionQuotaClients {
     var glm: SubscriptionQuotaFetch
     var codex: (CodexQuotaInput, @escaping CodexQuotaCompletion) -> SubscriptionQuotaRequest
 
-    static let live = Self(glm: { key, completion in
-        GLMQuotaQuery.start(key: key, completion: completion)
+    static let live = Self(glm: { key, adapter, completion in
+        GLMQuotaQuery.start(key: key, adapter: adapter, completion: completion)
     }, codex: { input, completion in
         let request = SubscriptionQuotaRequest()
         DispatchQueue.global(qos: .utility).async {
@@ -126,17 +135,22 @@ enum CodexAuthDocument {
     }
 }
 
-/// 固定使用官方插件的只读接口；禁止重定向，避免把 Authorization 发往其他主机。
-/// 来源：github.com/zai-org/zai-coding-plugins 的 glm-plan-usage/query-usage.mjs。
+/// 内置端点固定为官方插件的只读接口；禁止重定向，避免把 Authorization 发往其他主机。
+/// 市场脚本可通过 adapter 覆盖端点与解析，但主机须先通过 GLMScriptAdapter 白名单。
 final class GLMQuotaQuery: NSObject, URLSessionDataDelegate {
+    static let defaultEndpoint = URL(string: "https://open.bigmodel.cn/api/monitor/usage/quota/limit")!
+
     private var completion: SubscriptionQuotaCompletion?
     private var buffer = Data()
     private var session: URLSession?
+    private var parse: ((Data) throws -> SubscriptionQuotaSnapshot) = { try SubscriptionQuotaParser.glm($0) }
 
     static func start(key: String, configuration: URLSessionConfiguration = .ephemeral,
+                      adapter: GLMAdapterConfiguration? = nil,
                       completion: @escaping SubscriptionQuotaCompletion) -> SubscriptionQuotaRequest {
         let query = GLMQuotaQuery()
         query.completion = completion
+        if let adapter { query.parse = adapter.parse }
         let config = configuration
         config.timeoutIntervalForRequest = 12
         config.timeoutIntervalForResource = 15
@@ -144,8 +158,11 @@ final class GLMQuotaQuery: NSObject, URLSessionDataDelegate {
         config.urlCache = nil
         let session = URLSession(configuration: config, delegate: query, delegateQueue: nil)
         query.session = session
-        var request = URLRequest(url: URL(string: "https://open.bigmodel.cn/api/monitor/usage/quota/limit")!)
-        request.setValue(key, forHTTPHeaderField: "Authorization")
+        var request = URLRequest(url: adapter?.url ?? defaultEndpoint)
+        // "{credential}" 只在发送前一刻替换；URL 与模板来自脚本或内置常量，均不含密钥。
+        for (name, template) in adapter?.headers ?? ["Authorization": "{credential}"] {
+            request.setValue(template.replacingOccurrences(of: "{credential}", with: key), forHTTPHeaderField: name)
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let task = session.dataTask(with: request)
         let cancellation = SubscriptionQuotaRequest()
@@ -180,7 +197,7 @@ final class GLMQuotaQuery: NSObject, URLSessionDataDelegate {
             finish(.failure(error.code == .cancelled ? .cancelled : error.code == .timedOut ? .timeout : .network))
         } else if error != nil { finish(.failure(.network)) }
         else {
-            do { finish(.success(try SubscriptionQuotaParser.glm(buffer))) }
+            do { finish(.success(try parse(buffer))) }
             catch let error as SubscriptionQuotaError { finish(.failure(error)) }
             catch { finish(.failure(.invalidResponse)) }
         }

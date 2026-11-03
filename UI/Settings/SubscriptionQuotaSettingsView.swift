@@ -62,6 +62,22 @@ struct SubscriptionQuotaSettingsView: View {
                 Text("粘贴登录 JSON 后先验证格式与额度接口，成功后按账号加密保存到应用 Data 目录。后续查询不依赖 Codex 当前登录，token 刷新结果也会保存。")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("GLM 解析脚本") {
+                if let version = module.scriptVersion {
+                    Text("市场脚本 v\(version)").fontWeight(.medium)
+                } else {
+                    Text("未安装市场脚本，使用内置解析").foregroundStyle(.secondary)
+                }
+                if module.scriptDegraded {
+                    Label("脚本解析失败，已回退内置解析；可在插件市场重新更新脚本", systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Toggle("停用脚本，使用内置解析", isOn: preferences.binding(for: \.glmScriptDisabled))
+                Text("脚本来自插件市场并在应用内更新，无需重装。它运行在无网络、无文件访问的沙箱中，仅负责响应解析；密钥仍由本应用加密保管。")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Section("刷新") {
                 HStack {
                     Text("启用后每 5 分钟更新，单个账号失败不影响其他账号。")

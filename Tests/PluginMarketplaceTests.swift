@@ -63,9 +63,37 @@ final class PluginMarketplaceTests: XCTestCase {
         XCTAssertThrowsError(try bad.validated())
         XCTAssertThrowsError(try PluginCatalog.decode(Data("invalid".utf8)))
         XCTAssertThrowsError(try PluginCatalog.decode(Data(repeating: 32, count: PluginCatalog.maximumBytes + 1)))
-        XCTAssertThrowsError(try PluginCatalog(schemaVersion: 2, plugins: []).validated()) {
+        XCTAssertThrowsError(try PluginCatalog(schemaVersion: 3, plugins: []).validated()) {
             XCTAssertEqual($0 as? PluginCatalogError, .unsupportedSchema)
         }
+    }
+
+    func testCatalogScriptSourceMustComeFromRepositoryRawWithValidSHAAndVersion() throws {
+        let valid = try PluginCatalog.bundled()
+        XCTAssertNotNil(valid.plugins[0].script)
+        XCTAssertNoThrow(try valid.validated())
+        for script in [
+            PluginScriptSource(url: "https://github.com/DeanWanghewei/NotchDeck/marketplace/scripts/a.js",
+                               sha256: valid.plugins[0].script!.sha256, version: "1.0.0"),
+            PluginScriptSource(url: "https://raw.githubusercontent.com/another/repo/main/a.js",
+                               sha256: valid.plugins[0].script!.sha256, version: "1.0.0"),
+            PluginScriptSource(url: "http://raw.githubusercontent.com/DeanWanghewei/NotchDeck/main/a.js",
+                               sha256: valid.plugins[0].script!.sha256, version: "1.0.0"),
+            PluginScriptSource(url: valid.plugins[0].script!.url, sha256: "ABCDEF", version: "1.0.0"),
+            PluginScriptSource(url: valid.plugins[0].script!.url,
+                               sha256: String(repeating: "0", count: 64) + "0", version: "1.0.0"),
+            PluginScriptSource(url: valid.plugins[0].script!.url,
+                               sha256: String(repeating: "z", count: 64), version: "1.0.0"),
+            PluginScriptSource(url: valid.plugins[0].script!.url, sha256: valid.plugins[0].script!.sha256, version: "1.0-beta"),
+        ] {
+            var bad = valid
+            bad.plugins[0].script = script
+            XCTAssertThrowsError(try bad.validated())
+        }
+        // v1 目录（无脚本字段）继续有效，旧缓存不因升级被拒。
+        var legacy = valid
+        legacy.plugins[0].script = nil
+        XCTAssertNoThrow(try legacy.validated())
     }
 
     func testFreshMarketplaceDoesNotInstantiateOrStartOptionalPluginsOrFetch() {
@@ -298,6 +326,118 @@ final class PluginMarketplaceTests: XCTestCase {
         XCTAssertEqual(fetcher.pending.count, 2)
     }
 
+    @MainActor
+    func testScriptStoreVerifiesChecksumRejectsTamperingAndUninstalls() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("notchdeck-store-\(UUID().uuidString)")
+        let store = PluginScriptStore(root: root)
+        let source = Data("// adapter v9".utf8)
+        let manifest = PluginScriptStore.Manifest(version: "9.0.0", sha256: PluginScriptStore.sha256Hex(source), downloadedAt: Date())
+        XCTAssertNil(store.installed(pluginID: "subscriptions"))
+        try store.install(pluginID: "subscriptions", data: source, manifest: manifest)
+        XCTAssertEqual(store.installed(pluginID: "subscriptions")?.manifest.version, "9.0.0")
+        XCTAssertEqual(store.installedManifest(pluginID: "subscriptions"), manifest)
+        // 篡改正文后哈希不符，按未安装处理，不进入运行时。
+        try Data("// tampered".utf8).write(to: root.appendingPathComponent("subscriptions/adapter.js"))
+        XCTAssertNil(store.installed(pluginID: "subscriptions"))
+        store.uninstall(pluginID: "subscriptions")
+        XCTAssertNil(store.installedManifest(pluginID: "subscriptions"))
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    @MainActor
+    func testUpdateScriptDownloadsVerifiesChecksumAndNotifiesModules() throws {
+        let scriptSource = try XCTUnwrap(catalog.plugins[0].script)
+        let payload = Data("var adapter = { version: '2.0.0' };".utf8)
+        let digest = PluginScriptStore.sha256Hex(payload)
+        var listing = catalog.plugins[0]
+        listing.script = PluginScriptSource(url: scriptSource.url, sha256: digest, version: "2.0.0")
+        var custom = catalog!
+        custom.plugins[0] = listing
+        let store = tempScriptStore()
+        try store.install(pluginID: "subscriptions", data: Data("var adapter = { version: '1.0.0' };".utf8),
+                          manifest: .init(version: "1.0.0",
+                                          sha256: PluginScriptStore.sha256Hex(Data("var adapter = { version: '1.0.0' };".utf8)),
+                                          downloadedAt: Date()))
+        var completions: [PluginScriptCompletion] = []
+        let market = makeMarket(bundle: custom, scriptStore: store) { _, completion in
+            completions.append(completion)
+            return AnyCancellable {}
+        }
+        XCTAssertTrue(market.install("subscriptions"))
+        if case .updatable(let current, let available) = market.scriptState(for: "subscriptions") {
+            XCTAssertEqual(current, "1.0.0")
+            XCTAssertEqual(available, "2.0.0")
+        } else { XCTFail("应识别为可更新") }
+        var notified = false
+        // 沙箱环境的 String object 匹配不可靠（实测通配可收到），统一 object: nil + 自行过滤。
+        let observer = NotificationCenter.default.addObserver(forName: .pluginScriptDidUpdate, object: nil, queue: nil) { note in
+            guard note.object as? String == "subscriptions" else { return }
+            notified = true
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        XCTAssertTrue(market.updateScript(for: "subscriptions"))
+        completions[0](.success(payload))
+        settleMainQueue()
+        // 下载完成回调与通知同在主队列：settle 后必然已投递。
+        XCTAssertTrue(notified, "脚本更新成功后应广播热加载通知")
+        XCTAssertEqual(market.scriptState(for: "subscriptions"), .installed(version: "2.0.0"))
+        XCTAssertTrue(market.scriptMessage?.contains("2.0.0") == true)
+        // 校验不符：保留现有脚本，仅提示；同一 settings 下插件已安装，无需再次 install。
+        var mismatchCompletions: [PluginScriptCompletion] = []
+        var mismatched = catalog!
+        mismatched.plugins[0].script = PluginScriptSource(url: scriptSource.url, sha256: String(repeating: "a", count: 64), version: "3.0.0")
+        let mismatchMarket = makeMarket(bundle: mismatched, scriptStore: store) { _, completion in
+            mismatchCompletions.append(completion)
+            return AnyCancellable {}
+        }
+        XCTAssertTrue(mismatchMarket.isInstalled("subscriptions"))
+        XCTAssertTrue(mismatchMarket.updateScript(for: "subscriptions"))
+        mismatchCompletions[0](.success(payload))
+        settleMainQueue()
+        XCTAssertEqual(mismatchMarket.scriptState(for: "subscriptions"), .updatable(installed: "2.0.0", available: "3.0.0"))
+        XCTAssertTrue(mismatchMarket.scriptMessage?.contains("校验不符") == true)
+        // 目录未声明脚本或未安装插件时不可更新。
+        XCTAssertFalse(market.updateScript(for: "missing"))
+        var plain = catalog!
+        plain.plugins[0].script = nil
+        let bare = makeMarket(bundle: plain, scriptStore: store) { _, _ in AnyCancellable {} }
+        XCTAssertFalse(bare.updateScript(for: "subscriptions"))
+    }
+
+    @MainActor
+    func testAutomaticRefreshThrottlesByHourAndStaysSilentOnFailure() throws {
+        let fetcher = CatalogFixtureFetcher()
+        let stale = CacheForTests(catalog: catalog!, fetchedAt: Date().addingTimeInterval(-2 * 3600))
+        settings.cachedPluginCatalog = try JSONEncoder().encode(stale)
+        let market = makeMarket(fetch: fetcher.fetch)
+        market.refreshIfStale()
+        XCTAssertEqual(fetcher.pending.count, 1)
+        // 静默失败：不弹错误横幅，也不更新检查时间。
+        fetcher.pending[0](.failure(.network))
+        settleMainQueue()
+        XCTAssertNil(market.errorMessage)
+        XCTAssertEqual(market.lastChecked, stale.fetchedAt)
+        // 一小时内不重复自动检查（失败也计入尝试时间）；手动刷新不受节流影响且失败会提示。
+        market.refreshIfStale()
+        XCTAssertEqual(fetcher.pending.count, 1, "节流跳过不得产生新请求（已消费回调仍在 fixture 中）")
+        market.refresh()
+        XCTAssertEqual(fetcher.pending.count, 2)
+        fetcher.pending[1](.failure(.network))
+        settleMainQueue()
+        XCTAssertNotNil(market.errorMessage)
+        // 成功后自动刷新同样落缓存并清错误。
+        market.refresh(automatic: true)
+        fetcher.pending[2](.success(try JSONEncoder().encode(catalog)))
+        settleMainQueue()
+        XCTAssertNil(market.errorMessage)
+        XCTAssertGreaterThan(market.lastChecked!, stale.fetchedAt)
+    }
+
+    private struct CacheForTests: Codable {
+        let catalog: PluginCatalog
+        let fetchedAt: Date
+    }
+
     func testCatalogTransportUsesOnlyFixedGitHubURLAndRejectsHTTPAndOversizeResponses() throws {
         let payload = try JSONEncoder().encode(catalog)
         for (status, body, expected) in [(200, payload, Optional<PluginCatalogError>.none),
@@ -327,10 +467,19 @@ final class PluginMarketplaceTests: XCTestCase {
     }
 
     private func makeMarket(registry: ModuleRegistry = ModuleRegistry(), definitions: [PluginImplementation]? = nil,
-                            bundle: PluginCatalog? = nil, fetch: @escaping PluginCatalogFetch = { _ in AnyCancellable {} }) -> PluginMarketplace {
+                            bundle: PluginCatalog? = nil, fetch: @escaping PluginCatalogFetch = { _ in AnyCancellable {} },
+                            scriptStore: PluginScriptStore? = nil,
+                            scriptFetch: @escaping PluginScriptFetch = { _, _ in AnyCancellable {} }) -> PluginMarketplace {
         PluginMarketplace(settings: settings, registry: registry,
                           implementations: definitions ?? [implementation(MarketplaceFixture())],
-                          bundledCatalog: bundle ?? catalog, appVersion: catalog.plugins[0].minimumAppVersion, fetch: fetch)
+                          bundledCatalog: bundle ?? catalog, appVersion: catalog.plugins[0].minimumAppVersion, fetch: fetch,
+                          scriptStore: scriptStore ?? tempScriptStore(), scriptFetch: scriptFetch)
+    }
+
+    /// 测试一律用临时目录脚本仓，绝不读写用户真实的 Plugins 目录。
+    private func tempScriptStore() -> PluginScriptStore {
+        PluginScriptStore(root: FileManager.default.temporaryDirectory
+            .appendingPathComponent("notchdeck-scriptstore-\(UUID().uuidString)"))
     }
 
     private func implementation(_ module: MarketplaceFixture) -> PluginImplementation {
@@ -342,7 +491,8 @@ final class PluginMarketplaceTests: XCTestCase {
         entry = PluginListing(id: id, name: entry.name, summary: entry.summary, details: entry.details,
                               systemImage: entry.systemImage, author: entry.author, version: entry.version,
                               minimumAppVersion: entry.minimumAppVersion, capabilities: entry.capabilities,
-                              documentationURL: entry.documentationURL, sourceURL: entry.sourceURL)
+                              documentationURL: entry.documentationURL, sourceURL: entry.sourceURL,
+                              script: entry.script)
         return entry
     }
 

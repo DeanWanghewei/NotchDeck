@@ -11,7 +11,7 @@ NotchDeck 是 macOS 刘海信息岛（灵动岛）应用：SwiftUI + 无边框 N
 | `docs/custom-items.md` | 自定义命令小部件的用户文档（写法与规则） |
 | `docs/module-development.md` | 内置 Swift 组件接入：描述、生命周期、独立设置与配置、测试要求 |
 | `docs/subscription-quotas.md` | GLM Coding Plan / ChatGPT · Codex 订阅额度配置、凭据与接口边界 |
-| `marketplace/README.md` | 插件市场目录、GitHub 维护与随应用分发约定 |
+| `marketplace/README.md` | 插件市场目录、GitHub 维护、随应用分发约定与适配脚本（JSC 沙箱）安全边界 |
 | `docs/macos-notes.md` | 平台实证笔记：各 macOS 版本的窗口/Space/电源陷阱与探针结论（开发参考，README 只留摘要） |
 | `docs/PROJECT_REVIEW.md` | 一次性项目检查与修复记录（2026-09-13，历史存档，不随开发更新） |
 
@@ -34,6 +34,7 @@ NotchDeck 是 macOS 刘海信息岛（灵动岛）应用：SwiftUI + 无边框 N
 - 面板布局：`Core/PanelLayout.swift`（520 × 580 上限、接壤轮廓、与硬件刘海对齐）
 - 系统采样：`Modules/System/SystemMonitor.swift`（后台串行队列、1s、差分基线在 `reset()` 重建）
 - 悬停明细交互：`UI/SystemMonitorView.swift`（hover 展开 + 点击固定，离开整体区域才收起）
+- 市场脚本存储：`Core/Plugins/PluginScriptStore.swift`（应用 Data 目录 `NotchDeck/Plugins/<id>/`，sha256 落盘与加载双校验）；JSC 沙箱运行时：`Modules/Subscriptions/GLMScriptAdapter.swift`（主机白名单、每查询新建 JSContext、失败回退内置解析）
 - 颜色定义：`UI/UIHelpers.swift` 的 `HeatScale`、`UI/CustomItemsView.swift` 的热力图档位
 
 ## 发版节奏

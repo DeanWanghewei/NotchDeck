@@ -120,6 +120,148 @@ final class SubscriptionQuotaTests: XCTestCase {
         XCTAssertEqual(missing.resetHelpDescription(now: now), "服务未提供重置时间")
     }
 
+    // MARK: - 市场脚本适配
+
+    /// 加载随测试打包的真实市场脚本：脚本改动必须与解析测试同步演进。
+    private func marketplaceScript() throws -> String {
+        let bundle = Bundle(for: PluginMarketplace.self)
+        let url = try XCTUnwrap(bundle.url(forResource: "subscriptions-glm", withExtension: "js"), "测试资源缺少市场脚本")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    func testMarketplaceScriptMatchesBuiltinParsingOnConfirmedPayloads() throws {
+        let source = try marketplaceScript()
+        let request = GLMScriptAdapter.request(from: source)
+        XCTAssertEqual(request?.url.absoluteString, "https://open.bigmodel.cn/api/monitor/usage/quota/limit")
+        XCTAssertEqual(request?.headers["Authorization"], "{credential}")
+        for json in [
+            #"{"code":200,"success":true,"data":{"level":"pro","limits":[{"type":"TOKENS_LIMIT","percentage":28,"unit":3,"number":5,"nextResetTime":1781778751996},{"type":"TOKENS_LIMIT","percentage":60,"unit":6,"number":1,"nextResetTime":"2026-06-22T00:00:00Z"},{"type":"TIME_LIMIT","percentage":12,"nextResetTime":"1781778751.996"}]}}"#,
+            #"{"limits":[{"type":"TOKENS_LIMIT","percentage":28,"unit":3,"number":5},{"type":"TOKENS_LIMIT","percentage":28,"unit":3,"number":5},{"type":"TOKENS_LIMIT","percentage":28,"unit":6,"number":1},{"type":"TIME_LIMIT","percentage":12}]}"#,
+            #"{"limits":[{"type":"TOKENS_LIMIT","percentage":28,"future":"a"},{"type":"TOKENS_LIMIT","percentage":28,"future":"b"}]}"#,
+            #"{"data":{"level":"max","limits":[{"type":"TOKENS_LIMIT","percentage":0},{"type":"TIME_LIMIT","percentage":100}]}}"#,
+        ] {
+            let data = Data(json.utf8)
+            let builtin = try SubscriptionQuotaParser.glm(data)
+            let scripted = try GLMScriptAdapter.parse(source: source, body: data)
+            XCTAssertEqual(scripted.plan, builtin.plan)
+            XCTAssertEqual(scripted.windows.map(\.title), builtin.windows.map(\.title))
+            XCTAssertEqual(scripted.windows.map(\.usedPercent), builtin.windows.map(\.usedPercent))
+            XCTAssertEqual(scripted.windows.map(\.resetsAt), builtin.windows.map(\.resetsAt))
+        }
+        // 认证语义与无效响应按内置口径抛出。
+        XCTAssertThrowsError(try GLMScriptAdapter.parse(source: source, body: Data(#"{"code":1001,"success":false}"#.utf8))) {
+            XCTAssertEqual($0 as? SubscriptionQuotaError, .signInRequired)
+        }
+        XCTAssertThrowsError(try GLMScriptAdapter.parse(source: source, body: Data("garbage".utf8))) {
+            XCTAssertEqual($0 as? SubscriptionQuotaError, .invalidResponse)
+        }
+    }
+
+    func testGLMScriptAdapterEnforcesHostAllowlistAndReturnContract() throws {
+        func script(_ body: String) -> String { "var adapter = { \(body) };" }
+        let request = #"request: { url: "https://api.z.ai/api/monitor/usage/quota/limit", headers: { "Authorization": "{credential}" } }"#
+        XCTAssertNotNil(GLMScriptAdapter.request(from: script(request)))
+        for hostile in ["https://evil.example.com/a", "https://open.bigmodel.cn.evil.example/a",
+                        "http://open.bigmodel.cn/a", "https://user@open.bigmodel.cn/a"] {
+            XCTAssertNil(GLMScriptAdapter.request(from: script(#"request: { url: "\#(hostile)", headers: { "Authorization": "{credential}" } }"#)),
+                         "应拒绝 \(hostile)")
+        }
+        XCTAssertNil(GLMScriptAdapter.request(from: "syntax ((( error"))
+        XCTAssertNil(GLMScriptAdapter.request(from: script(#"request: { url: "https://open.bigmodel.cn/api/x" }"#)), "缺少请求头")
+        var windows = (0..<9).map { "{\"title\":\"w\($0)\",\"usedPercent\":10}" }.joined(separator: ",")
+        XCTAssertThrowsError(try GLMScriptAdapter.parse(source: script("parse: function (b) { return { windows: [\(windows)] }; }"),
+                                                      body: Data("{}".utf8)), "超过窗口上限")
+        windows = (0..<8).map { "{\"title\":\"w\($0)\",\"usedPercent\":10}" }.joined(separator: ",")
+        XCTAssertNoThrow(try GLMScriptAdapter.parse(source: script("parse: function (b) { return { windows: [\(windows)] }; }"),
+                                                     body: Data("{}".utf8)))
+        XCTAssertThrowsError(try GLMScriptAdapter.parse(source: script("parse: function (b) { return {}; }"),
+                                                        body: Data("{}".utf8)))
+    }
+
+    @MainActor
+    func testModuleInjectsMarketScriptTogglesOffAndHotReloadsOnUpdate() throws {
+        let suite = "com.notchdeck.quotas.script.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let source = try marketplaceScript()
+        let sourceData = Data(source.utf8)
+        let store = PluginScriptStore(root: FileManager.default.temporaryDirectory
+            .appendingPathComponent("notchdeck-mod-\(UUID().uuidString)"))
+        try store.install(pluginID: "subscriptions", data: sourceData,
+                          manifest: .init(version: "9.9.9", sha256: PluginScriptStore.sha256Hex(sourceData), downloadedAt: Date()))
+        let secrets = QuotaTestSecrets()
+        let client = QuotaTestClient()
+        let module = SubscriptionQuotaModule(settings: SettingsStore(defaults: defaults), clients: client.clients,
+                                             secrets: secrets, scriptStore: store)
+        let account = SubscriptionAccount(provider: .glm)
+        secrets.keys[account.id] = "test-only-not-a-real-key"
+        module.preferences.update { $0.accounts = [account] }
+        module.start()
+        settle()
+        XCTAssertEqual(module.scriptVersion, "9.9.9")
+        XCTAssertEqual(client.glm.count, 1)
+        let adapter = try XCTUnwrap(client.glm[0].adapter)
+        let snapshot = try adapter.parse(Data(#"{"limits":[{"type":"TOKENS_LIMIT","percentage":28,"unit":3,"number":5,"nextResetTime":1781778751996}]}"#.utf8))
+        XCTAssertEqual(snapshot.windows.map(\.title), ["5 小时"])
+        XCTAssertFalse(module.scriptDegraded)
+        client.glm[0].completion(.success(.fixture(for: .glm)))
+        settle()
+
+        // 停用开关：新查询不带适配器（内置解析）。
+        module.preferences.update { $0.glmScriptDisabled = true }
+        settle()
+        module.refresh()
+        settle()
+        XCTAssertEqual(client.glm.count, 2)
+        XCTAssertNil(client.glm[1].adapter)
+        client.glm[1].completion(.success(.fixture(for: .glm)))
+        settle()
+
+        // 市场脚本更新通知：热加载新版本并立即触发一次查询。
+        module.preferences.update { $0.glmScriptDisabled = false }
+        settle()
+        let replacement = Data("var adapter = { version: '9.9.10', request: { url: 'https://open.bigmodel.cn/api/monitor/usage/quota/limit', headers: { 'Authorization': '{credential}' } }, parse: function (b) { throw new Error('broken'); } };".utf8)
+        try store.install(pluginID: "subscriptions", data: replacement,
+                          manifest: .init(version: "9.9.10", sha256: PluginScriptStore.sha256Hex(replacement), downloadedAt: Date()))
+        NotificationCenter.default.post(name: .pluginScriptDidUpdate, object: "subscriptions")
+        settle()
+        XCTAssertEqual(module.scriptVersion, "9.9.10")
+        XCTAssertEqual(client.glm.count, 3)
+        let broken = try XCTUnwrap(client.glm[2].adapter)
+        // 脚本解析失败在同一响应上回退内置解析，组件不中断，并在设置页提示降级。
+        let fallback = try broken.parse(Data(#"{"limits":[{"type":"TOKENS_LIMIT","percentage":28,"unit":6,"number":1}]}"#.utf8))
+        XCTAssertEqual(fallback.windows.map(\.title), ["每周"])
+        settle()
+        XCTAssertTrue(module.scriptDegraded)
+        module.stop()
+    }
+
+    @MainActor
+    func testModuleIgnoresCorruptedScriptAndQueriesWithBuiltinParser() throws {
+        let suite = "com.notchdeck.quotas.corrupt.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let garbage = Data("not javascript at all (((".utf8)
+        let store = PluginScriptStore(root: FileManager.default.temporaryDirectory
+            .appendingPathComponent("notchdeck-corrupt-\(UUID().uuidString)"))
+        try store.install(pluginID: "subscriptions", data: garbage,
+                          manifest: .init(version: "0.0.1", sha256: PluginScriptStore.sha256Hex(garbage), downloadedAt: Date()))
+        let secrets = QuotaTestSecrets()
+        let client = QuotaTestClient()
+        let module = SubscriptionQuotaModule(settings: SettingsStore(defaults: defaults), clients: client.clients,
+                                             secrets: secrets, scriptStore: store)
+        let account = SubscriptionAccount(provider: .glm)
+        secrets.keys[account.id] = "test-only-not-a-real-key"
+        module.preferences.update { $0.accounts = [account] }
+        module.start()
+        settle()
+        // 脚本无法求值：请求模板不可用 → 不注入适配器，置降级提示，查询继续。
+        XCTAssertEqual(client.glm.count, 1)
+        XCTAssertNil(client.glm[0].adapter)
+        XCTAssertTrue(module.scriptDegraded)
+        module.stop()
+    }
+
     func testPastedJSONErrorsAreSpecificAndDoNotExposeCredentials() throws {
         let cases: [(String, SubscriptionQuotaError)] = [
             ("/tmp/auth.json", .invalidAuthJSON),
@@ -700,13 +842,15 @@ final class SubscriptionQuotaTests: XCTestCase {
             for dark in [false, true] {
                 for mode in ["cards", "rings", "rings-narrow", "compact", "settings"] {
                     let renderWidth: CGFloat = mode == "rings-narrow" ? 360 : 480
+                    // 设置页随 Section 增多变长，渲染帧取最高视图的完整高度。
+                    let renderHeight: CGFloat = mode == "settings" ? 880 : 540
                     let view: AnyView = mode == "settings" ?
                         AnyView(Form { SubscriptionQuotaSettingsView(module: module, preferences: module.preferences) }.formStyle(.grouped)) :
                         AnyView(SubscriptionQuotaView(module: module, preferences: module.preferences)
                             .environment(\.modulePresentation, .init(placement: .tab, displayModeID: mode == "rings-narrow" ? "rings" : mode)))
-                    let host = NSHostingView(rootView: view.padding(16).frame(width: renderWidth, height: 540, alignment: .topLeading)
+                    let host = NSHostingView(rootView: view.padding(16).frame(width: renderWidth, height: renderHeight, alignment: .topLeading)
                         .background(dark ? Color.black : Color.white).environment(\.colorScheme, dark ? .dark : .light))
-                    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: renderWidth, height: 540), styleMask: [.borderless], backing: .buffered, defer: false)
+                    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: renderWidth, height: renderHeight), styleMask: [.borderless], backing: .buffered, defer: false)
                     window.contentView = host
                     window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                     // 屏幕外呈现窗口，让 onAppear 与有限动画完成后再缓存，避免截到初始透明帧。
@@ -770,15 +914,15 @@ private final class QuotaTestSecrets: SubscriptionSecretStore {
 }
 
 private final class QuotaTestClient {
-    struct GLM { let key: String; let request: SubscriptionQuotaRequest; let completion: SubscriptionQuotaCompletion }
+    struct GLM { let key: String; let adapter: GLMAdapterConfiguration?; let request: SubscriptionQuotaRequest; let completion: SubscriptionQuotaCompletion }
     struct Codex { let input: CodexQuotaInput; let request: SubscriptionQuotaRequest; let completion: CodexQuotaCompletion }
     var glm: [GLM] = []
     var codex: [Codex] = []
     var count: Int { glm.count + codex.count }
     var clients: SubscriptionQuotaClients {
-        SubscriptionQuotaClients(glm: { key, completion in
+        SubscriptionQuotaClients(glm: { key, adapter, completion in
             let request = SubscriptionQuotaRequest()
-            self.glm.append(GLM(key: key, request: request, completion: completion))
+            self.glm.append(GLM(key: key, adapter: adapter, request: request, completion: completion))
             return request
         }, codex: { input, completion in
             let request = SubscriptionQuotaRequest()

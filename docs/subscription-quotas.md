@@ -28,6 +28,8 @@
 
 依照接口已确认的 `TOKENS_LIMIT` / `TIME_LIMIT` 和 `percentage` 显示“编码额度”/“工具调用”。根据 `unit=3, number=5` 识别“5 小时”、`unit=6, number=1` 识别“每周”，不依赖返回顺序；此映射参考公开 CodexBar Z.ai 实现及用户确认的双窗口含义。未知周期保留“编码额度”并按需编号，只对完整原始对象完全相同的数据去重。重置时间直接读取条目的 `nextResetTime`（已实证形态：epoch 毫秒数字与 RFC3339 字符串，兼容数字字符串与按秒计的值；依据 zai-org/ZCode、Raycast agent-usage、zai-rs 等公开实现的响应样本），字段缺失或无法解析时显示“服务未提供重置时间”，不估算、不调用模型推理、不解析 429 错误文本；完整周期以[官方用量页](https://www.bigmodel.cn/coding-plan/personal/usage)为准。未带凭据的探针返回 HTTP 200 + 业务码 1001，客户端同时检查业务结果，不将认证失败显示为零用量。
 
+**GLM 解析可由市场脚本提供**：插件市场可为已添加的本插件安装/更新适配脚本（`marketplace/scripts/subscriptions-glm.js`），脚本经目录 sha256 校验后运行在无网络、无文件访问的 JavaScriptCore 沙箱，仅负责上述请求声明与响应解析，密钥仍由宿主加密保管并在发送时注入，请求主机受宿主白名单约束。脚本在应用内更新并热加载生效，无需重装；解析失败时同一响应自动回退内置 Swift 解析，插件设置的“GLM 解析脚本”分区显示脚本版本、降级提示与“停用脚本”开关。
+
 ## Codex：粘贴 JSON、验证与独立保存
 
 添加 Codex 账号时，直接在 **账号登录 JSON** 文本框粘贴完整登录信息，需包含 `tokens.access_token`。不填写文件路径，不打开文件选择器。仅支持 ChatGPT 订阅登录，API Key 登录不能查询订阅额度。编辑已有账号时，JSON 留空保留原登录；填写新 JSON 则验证后替换。

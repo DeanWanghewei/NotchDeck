@@ -26,12 +26,14 @@ struct SubscriptionQuotaPreferences: Codable, Equatable {
     var notificationThreshold = 100
     var effectiveNotificationThreshold: Int { min(100, max(1, notificationThreshold)) }
     var codexExecutable = ""
+    /// 排障开关：停用市场解析脚本，回退内置解析；不影响脚本文件与市场更新。
+    var glmScriptDisabled = false
     var accounts: [SubscriptionAccount] = []
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case notificationsEnabled, notificationThreshold, codexExecutable, accounts, glmEnabled, codexEnabled
+        case notificationsEnabled, notificationThreshold, codexExecutable, glmScriptDisabled, accounts, glmEnabled, codexEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -39,6 +41,7 @@ struct SubscriptionQuotaPreferences: Codable, Equatable {
         notificationsEnabled = try values.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? false
         notificationThreshold = min(100, max(1, try values.decodeIfPresent(Int.self, forKey: .notificationThreshold) ?? 100))
         codexExecutable = try values.decodeIfPresent(String.self, forKey: .codexExecutable) ?? ""
+        glmScriptDisabled = try values.decodeIfPresent(Bool.self, forKey: .glmScriptDisabled) ?? false
         if let saved = try values.decodeIfPresent([SubscriptionAccount].self, forKey: .accounts) {
             var ids = Set<String>()
             accounts = saved.filter { !$0.id.isEmpty && ids.insert($0.id).inserted }
@@ -58,6 +61,7 @@ struct SubscriptionQuotaPreferences: Codable, Equatable {
         try values.encode(notificationsEnabled, forKey: .notificationsEnabled)
         try values.encode(effectiveNotificationThreshold, forKey: .notificationThreshold)
         try values.encode(codexExecutable, forKey: .codexExecutable)
+        try values.encode(glmScriptDisabled, forKey: .glmScriptDisabled)
         try values.encode(accounts, forKey: .accounts)
     }
 }

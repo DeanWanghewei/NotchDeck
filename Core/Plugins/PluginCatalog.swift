@@ -1,6 +1,8 @@
 import Foundation
 
 /// 目录只描述插件；可执行实现必须来自应用随附的 Swift 工厂。
+/// schemaVersion 2 起，条目可另声明一个适配脚本：脚本经 sha256 校验后下载，
+/// 运行在无 I/O 的 JavaScriptCore 沙箱（只能计算与解析，拿不到密钥明文），主机仍由宿主白名单约束。
 struct PluginCatalog: Codable, Equatable {
     let schemaVersion: Int
     var plugins: [PluginListing]
@@ -19,7 +21,7 @@ struct PluginCatalog: Codable, Equatable {
     }
 
     func validated() throws -> Self {
-        guard schemaVersion == 1 else { throw PluginCatalogError.unsupportedSchema }
+        guard schemaVersion == 1 || schemaVersion == 2 else { throw PluginCatalogError.unsupportedSchema }
         var ids = Set<String>()
         guard plugins.count <= 100, plugins.allSatisfy({ entry in
             !entry.id.isEmpty && entry.id.count <= 64 &&
@@ -32,7 +34,8 @@ struct PluginCatalog: Codable, Equatable {
             entry.systemImage.count <= 80 &&
             PluginVersion(entry.version) != nil && PluginVersion(entry.minimumAppVersion) != nil &&
             entry.capabilities.count <= 12 && entry.capabilities.allSatisfy { !$0.isEmpty && $0.count <= 200 } &&
-            Self.isRepositoryLink(entry.documentationURL) && Self.isRepositoryLink(entry.sourceURL)
+            Self.isRepositoryLink(entry.documentationURL) && Self.isRepositoryLink(entry.sourceURL) &&
+            entry.script.map(Self.isValidScriptSource) ?? true
         }) else { throw PluginCatalogError.invalidCatalog }
         return self
     }
@@ -46,6 +49,18 @@ struct PluginCatalog: Codable, Equatable {
     private static func isRepositoryLink(_ url: URL) -> Bool {
         url.scheme == "https" && url.host == "github.com" && url.user == nil && url.password == nil &&
         url.port == nil && url.path.hasPrefix("/DeanWanghewei/NotchDeck/")
+    }
+
+    /// 脚本只允许从本仓库的 raw 地址下载；sha256 限定 64 位小写 hex，与下载内容逐字节比对。
+    static func isValidScriptSource(_ script: PluginScriptSource) -> Bool {
+        guard let url = URL(string: script.url),
+              url.scheme == "https" && url.host == "raw.githubusercontent.com" &&
+              url.user == nil && url.password == nil && url.port == nil &&
+              url.path.hasPrefix("/DeanWanghewei/NotchDeck/"),
+              script.sha256.utf8.count == 64,
+              script.sha256.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+              PluginVersion(script.version) != nil else { return false }
+        return true
     }
 }
 
@@ -61,6 +76,15 @@ struct PluginListing: Codable, Equatable, Identifiable {
     var capabilities: [String]
     var documentationURL: URL
     var sourceURL: URL
+    /// schemaVersion 2 的可选字段；v1 目录与未声明脚本的条目解码为 nil。
+    var script: PluginScriptSource?
+}
+
+/// 市场适配脚本来源声明；version 独立于插件实现版本，仅用于脚本自身的更新比对。
+struct PluginScriptSource: Codable, Equatable {
+    let url: String
+    let sha256: String
+    let version: String
 }
 
 /// 当前目录使用纯数字版本，按分量比较，避免 1.10 被字符串排序判成旧版。
