@@ -24,6 +24,18 @@ jobs:
           sw_vers
           xcodebuild -version
 
+      # main 同时承载开发代码与旧客户端的公开目录，不能把未交付的功能宣传成可更新。
+      - name: 检查公开目录不超前于正式版
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_TAG=$(gh release view --json tagName --jq '.tagName')
+          git fetch --depth=1 origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          RELEASE_CATALOG="$RUNNER_TEMP/notchdeck-released-catalog.json"
+          git show "${RELEASE_TAG}:marketplace/bundled-catalog.json" > "$RELEASE_CATALOG" ||
+            git show "${RELEASE_TAG}:marketplace/catalog.json" > "$RELEASE_CATALOG"
+          python3 scripts/check-marketplace-release.py --released "$RELEASE_CATALOG" --app-version "${RELEASE_TAG#v}"
+
       # .xcodeproj 不入库（.gitignore 忽略 *.xcodeproj），由 project.yml 在 CI 现场生成
       - name: 安装工具并生成工程
         run: |

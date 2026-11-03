@@ -18,7 +18,7 @@ targets:
       - path: Modules
       - path: UI
       - path: Resources/Assets.xcassets
-      - path: marketplace/catalog.json
+      - path: marketplace/bundled-catalog.json
         buildPhase: resources
       # 实验性系统级正在播放：以原样目录拷入资源（含 80B 对齐的 framework 结构）
       - path: Resources/MediaRemoteAdapter.framework
@@ -47,7 +47,7 @@ targets:
       - path: Modules
       - path: UI
       - path: Tests
-      - path: marketplace/catalog.json
+      - path: marketplace/bundled-catalog.json
         buildPhase: resources
       # 真实市场脚本进测试：脚本改动必须与解析测试同步，防止“脚本改了测试没跟”
       - path: marketplace/scripts/subscriptions-glm.js

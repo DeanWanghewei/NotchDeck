@@ -58,20 +58,18 @@ extension SubscriptionQuotaWindow {
     }
 
     /// 行内重置说明：剩余时长与绝对时间点同现，便于直接对照官方用量页；
-    /// 今天的重置只显时分，跨天补月日。
-    func resetDescription(now: Date = Date(), calendar: Calendar = .current) -> String {
+    /// 绝对时刻统一按 `yyyy-MM-dd HH:mm:ss` 展示，不因“今天/跨天”切换口径。
+    func resetDescription(now: Date = Date(), timeZone: TimeZone = .current) -> String {
         guard let reset = resetsAt else { return "服务未提供重置时间" }
         guard let duration = remainingDuration(now: now) else { return "周期已到，等待刷新" }
-        let style: Date.FormatStyle = calendar.isDate(reset, inSameDayAs: now)
-            ? .dateTime.hour().minute() : .dateTime.month().day().hour().minute()
-        return "还剩 \(duration) · \(reset.formatted(style)) 重置"
+        return "还剩 \(duration) · \(TimeFormat.string(reset, style: .dateTime, timeZone: timeZone)) 重置"
     }
 
-    /// 悬浮提示始终带月日，与行内（今天只显时分）互补。
-    func resetHelpDescription(now: Date = Date()) -> String {
+    /// 悬浮提示与行内同口径（完整年月日时分秒），便于复制对照官方用量页。
+    func resetHelpDescription(now: Date = Date(), timeZone: TimeZone = .current) -> String {
         guard let reset = resetsAt else { return "服务未提供重置时间" }
         guard let duration = remainingDuration(now: now) else { return "周期已到，等待刷新" }
-        return "还剩 \(duration)，重置于 \(reset.formatted(.dateTime.month().day().hour().minute()))"
+        return "还剩 \(duration)，重置于 \(TimeFormat.string(reset, style: .dateTime, timeZone: timeZone))"
     }
 }
 

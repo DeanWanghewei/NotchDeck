@@ -7,7 +7,7 @@ struct ClockModuleSettingsView: View {
         Section("时钟") {
             Toggle("显示秒数", isOn: preferences.binding(for: \.showSeconds))
             Toggle("显示时区", isOn: preferences.binding(for: \.showTimeZone))
-            Text("使用系统本地时间，跟随系统的时间格式；在模块管理中启用后显示。")
+            Text("使用系统本地时间，时分秒统一 HH:mm:ss、日期统一 yyyy-MM-dd；在模块管理中启用后显示。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let error = preferences.saveError {

@@ -156,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showSettingsWindow(moduleID: String? = nil) {
         if settingsWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 720, height: 560),
+                contentRect: NSRect(x: 0, y: 0, width: 980, height: 700),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false)
@@ -165,15 +165,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.level = .floating
             // 全屏应用所在 Space 也能呼出
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            window.minSize = NSSize(width: 640, height: 460)
+            window.contentMinSize = NSSize(width: 820, height: 560)
             window.contentView = NSHostingView(rootView: SettingsView())
+            // 恢复用户调整过的位置与尺寸，切换组件或重新打开时不再跳回屏幕中央。
+            if !window.setFrameUsingName("NotchDeck.Settings") { window.center() }
+            window.setFrameAutosaveName("NotchDeck.Settings")
             settingsWindow = window
         }
         if let moduleID {
             let page = SettingsPage.resolve(moduleID, boxes: appModel.registry.boxes)
             settingsWindow?.contentView = NSHostingView(rootView: SettingsView(app: appModel, page: page))
         }
-        settingsWindow?.center()
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
     }

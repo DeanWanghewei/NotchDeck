@@ -209,6 +209,50 @@ final class PluginMarketplaceTests: XCTestCase {
     }
 
     @MainActor
+    func testPublishedNewerVersionDoesNotBlockReaddingBundledVersion() throws {
+        let fetcher = CatalogFixtureFetcher()
+        let market = makeMarket(fetch: fetcher.fetch)
+        var future = catalog!
+        future.plugins[0].version = "9.0.0"
+        future.plugins[0].minimumAppVersion = "99.0.0"
+        market.refresh()
+        fetcher.pending[0](.success(try JSONEncoder().encode(future)))
+        settleMainQueue()
+        XCTAssertTrue(market.hasNativeUpdate(for: market.listings[0]))
+        XCTAssertNotNil(market.requirement(for: market.listings[0]))
+        XCTAssertEqual(market.installableListing("subscriptions")?.version, catalog.plugins[0].version)
+        XCTAssertTrue(market.install("subscriptions"))
+        XCTAssertEqual(market.installedVersion("subscriptions"), catalog.plugins[0].version)
+        XCTAssertTrue(market.remove("subscriptions"))
+        XCTAssertTrue(market.install("subscriptions"))
+    }
+
+    @MainActor
+    func testOlderNativeCatalogStillDeliversNewerScriptIndependently() throws {
+        let fetcher = CatalogFixtureFetcher()
+        let market = makeMarket(fetch: fetcher.fetch)
+        var published = catalog!
+        published.plugins[0].version = "1.0.0"
+        let script = try XCTUnwrap(published.plugins[0].script)
+        published.plugins[0].script = .init(url: script.url, sha256: script.sha256, version: "9.0.0")
+        market.refresh()
+        fetcher.pending[0](.success(try JSONEncoder().encode(published)))
+        settleMainQueue()
+        XCTAssertEqual(market.listings[0].version, catalog.plugins[0].version)
+        XCTAssertEqual(market.listings[0].script?.version, "9.0.0")
+        XCTAssertFalse(market.hasNativeUpdate(for: market.listings[0]))
+    }
+
+    func testCorruptScriptIsRepairableInsteadOfReportedAsInstalled() throws {
+        let store = tempScriptStore()
+        let source = Data("var adapter = {};".utf8)
+        try store.install(pluginID: "subscriptions", data: source,
+                          manifest: .init(version: "1.0.0", sha256: String(repeating: "a", count: 64), downloadedAt: Date()))
+        let market = makeMarket(scriptStore: store)
+        XCTAssertEqual(market.scriptState(for: "subscriptions"), .notInstalled)
+    }
+
+    @MainActor
     func testAppReconcilesTabsAndSettingsPagesAfterPluginInstallAndRemoval() {
         let module = MarketplaceFixture()
         let app = AppModel(settings: settings, modules: [], plugins: [implementation(module)],

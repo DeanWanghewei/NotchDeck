@@ -80,7 +80,7 @@ struct SubscriptionQuotaView: View {
                     .help([account.provider.title, snapshot?.plan?.capitalized].compactMap { $0 }.joined(separator: " · "))
                 Spacer(minLength: 4)
                 if let snapshot, !tile {
-                    Text(snapshot.fetchedAt, style: .time)
+                    Text(TimeFormat.string(snapshot.fetchedAt, style: .time))
                         .font(.system(size: 9)).foregroundStyle(.secondary)
                         .help(error == nil ? "最近更新时间" : "当前保留的是上次成功的数据")
                 }
@@ -112,7 +112,7 @@ struct SubscriptionQuotaView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             if tile, let snapshot {
-                Text(snapshot.fetchedAt, style: .time)
+                Text(TimeFormat.string(snapshot.fetchedAt, style: .time))
                     .font(.system(size: 9)).foregroundStyle(.secondary)
                     .help(error == nil ? "最近更新时间" : "当前保留的是上次成功的数据")
             }
@@ -218,26 +218,29 @@ struct SubscriptionQuotaView: View {
     }
 
     private func ring(_ window: SubscriptionQuotaWindow) -> some View {
-        HStack(spacing: 4) {
-            ZStack {
-                Circle().stroke(Color.primary.opacity(0.08), lineWidth: 4)
-                if window.fraction > 0 {
-                    Circle().trim(from: 0, to: window.fraction)
-                        .stroke(HeatScale.color(window.fraction), style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
+        // 重置行放在圆环下方（与长条/同心圆一致）：绝对时刻带完整年月日时分秒，
+        // 塞进圆环右侧的窄列会被截成"…"，换行又会在横向滚动容器里定不出高度。
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                ZStack {
+                    Circle().stroke(Color.primary.opacity(0.08), lineWidth: 4)
+                    if window.fraction > 0 {
+                        Circle().trim(from: 0, to: window.fraction)
+                            .stroke(HeatScale.color(window.fraction), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                    }
+                    Text("\(window.usedPercent, specifier: "%.0f")%")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
+                        .minimumScaleFactor(0.6).lineLimit(1).padding(3)
+                }.frame(width: 40, height: 40).padding(2)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: window.fraction)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(window.title).font(.system(size: 10)).lineLimit(1)
+                    Text("余 \(window.remainingPercent, specifier: "%.0f")%")
+                        .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
                 }
-                Text("\(window.usedPercent, specifier: "%.0f")%")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
-                    .minimumScaleFactor(0.6).lineLimit(1).padding(3)
-            }.frame(width: 40, height: 40).padding(2)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: window.fraction)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(window.title).font(.system(size: 10)).lineLimit(1)
-                Text("余 \(window.remainingPercent, specifier: "%.0f")%")
-                    .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
-                resetText(window)
-                    .font(.system(size: 9)).foregroundStyle(.secondary).fixedSize()
             }
+            resetText(window).font(.system(size: 9)).foregroundStyle(.secondary)
         }
         .help(window.resetHelpDescription())
         .accessibilityElement(children: .ignore)

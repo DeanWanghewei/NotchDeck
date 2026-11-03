@@ -33,6 +33,8 @@ final class PluginMarketplace: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var updatingScript = false
     @Published private(set) var scriptMessage: String?
+    @Published private(set) var scriptPluginID: String?
+    let currentAppVersion: String
 
     private let bundledCatalog: PluginCatalog
     private let implementations: [PluginImplementation]
@@ -63,6 +65,7 @@ final class PluginMarketplace: ObservableObject {
         self.registry = registry
         self.implementations = implementations
         self.appVersion = PluginVersion(appVersion)
+        self.currentAppVersion = appVersion
         self.fetch = fetch
         self.scriptStore = scriptStore
         self.scriptFetch = scriptFetch
@@ -96,9 +99,16 @@ final class PluginMarketplace: ObservableObject {
         let ids = Set(catalog.plugins.map(\.id))
         // 远端暂时下架或漏列不应让本地已有能力消失，仍可查看、添加和移除。
         let current = catalog.plugins.map { entry -> PluginListing in
-            if let shipped = bundledCatalog.plugins.first(where: { $0.id == entry.id }),
+            if var shipped = bundledCatalog.plugins.first(where: { $0.id == entry.id }),
                let bundledVersion = PluginVersion(shipped.version), let remoteVersion = PluginVersion(entry.version),
-               bundledVersion > remoteVersion { return shipped }
+               bundledVersion > remoteVersion {
+                // 原生功能与解析适配独立发版：保留新版随附说明时也要接收已发布的适配更新。
+                if let script = entry.script, let remoteScript = PluginVersion(script.version),
+                   shipped.script.flatMap({ PluginVersion($0.version) }).map({ remoteScript > $0 }) ?? true {
+                    shipped.script = script
+                }
+                return shipped
+            }
             return entry
         }
         return current + bundledCatalog.plugins.filter { !ids.contains($0.id) }
@@ -115,7 +125,24 @@ final class PluginMarketplace: ObservableObject {
 
     func installedVersion(_ id: String) -> String? {
         guard isInstalled(id) else { return nil }
-        return implementations.first { $0.descriptor.id == id }?.version
+        return localVersion(id)
+    }
+
+    func localVersion(_ id: String) -> String? {
+        implementations.first { $0.descriptor.id == id }?.version
+    }
+
+    /// 远端新版本不能阻止用户添加或重新添加随应用交付的旧版。
+    func installableListing(_ id: String) -> PluginListing? {
+        guard let entry = bundledCatalog.plugins.first(where: { $0.id == id }),
+              requirement(for: entry) == nil else { return nil }
+        return entry
+    }
+
+    func hasNativeUpdate(for entry: PluginListing) -> Bool {
+        guard let local = localVersion(entry.id).flatMap(PluginVersion.init),
+              let remote = PluginVersion(entry.version) else { return false }
+        return remote > local
     }
 
     func requirement(for entry: PluginListing) -> String? {
@@ -131,8 +158,7 @@ final class PluginMarketplace: ObservableObject {
     /// 添加即明确启用；重新添加沿用原有位置和组件配置，不覆盖凭据。
     @discardableResult
     func install(_ id: String) -> Bool {
-        guard !stopped, !isInstalled(id), let entry = listings.first(where: { $0.id == id }),
-              requirement(for: entry) == nil,
+        guard !stopped, !isInstalled(id), installableListing(id) != nil,
               let implementation = implementations.first(where: { $0.descriptor.id == id }) else { return false }
         let box = implementation.makeModule(settings)
         guard box.id == id, registry.register(box) else { return false }
@@ -190,7 +216,7 @@ final class PluginMarketplace: ObservableObject {
 
     func scriptState(for id: String) -> PluginScriptState {
         guard let entry = listings.first(where: { $0.id == id }), let script = entry.script else { return .none }
-        guard let manifest = scriptStore.installedManifest(pluginID: id) else { return .notInstalled }
+        guard let manifest = scriptStore.installed(pluginID: id)?.manifest else { return .notInstalled }
         guard let current = PluginVersion(manifest.version), let available = PluginVersion(script.version),
               current < available else { return .installed(version: manifest.version) }
         return .updatable(installed: manifest.version, available: script.version)
@@ -203,6 +229,7 @@ final class PluginMarketplace: ObservableObject {
               let entry = listings.first(where: { $0.id == id }), let script = entry.script,
               let url = URL(string: script.url) else { return false }
         updatingScript = true
+        scriptPluginID = id
         scriptMessage = nil
         scriptRequest = scriptFetch(url) { [weak self] result in
             DispatchQueue.main.async {

@@ -52,7 +52,7 @@ struct SettingsView: View {
             .id(selectedPage)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 640, minHeight: 460)
+        .frame(minWidth: 820, idealWidth: 980, minHeight: 560, idealHeight: 700)
         .onChange(of: app.registry.boxes.map(\.id)) { ids in
             if let page = selectedPage, case .module(let id) = page, !ids.contains(id) {
                 selectedPage = .modules
@@ -77,7 +77,7 @@ struct SettingsView: View {
             .padding(10)
             .padding(.top, 8)
         }
-        .frame(width: 156)
+        .frame(width: 180)
         .background(Color(nsColor: .controlBackgroundColor))
     }
 

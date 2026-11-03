@@ -41,7 +41,7 @@ struct PluginCatalog: Codable, Equatable {
     }
 
     static func bundled() throws -> Self {
-        guard let url = Bundle(for: PluginMarketplace.self).url(forResource: "catalog", withExtension: "json"),
+        guard let url = Bundle(for: PluginMarketplace.self).url(forResource: "bundled-catalog", withExtension: "json"),
               let data = try? Data(contentsOf: url) else { throw PluginCatalogError.missingBundle }
         return try decode(data)
     }

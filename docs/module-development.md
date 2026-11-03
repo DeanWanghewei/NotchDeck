@@ -6,7 +6,7 @@
 
 1. 在 `Modules/<领域>/` 实现 `NotchModule`，数据模型与采集逻辑放在同一领域目录。
 2. 面板视图放在 `UI/`，组件设置放在 `UI/Settings/`。
-3. 默认随应用注册的组件，在 `Modules/BuiltInModules.swift` 加入 `ModuleBox(YourModule(settings: settings))`。可选市场插件则在 `Modules/MarketplacePlugins.swift` 注册工厂、实现版本，并添加 `marketplace/catalog.json` 条目（不要两处同时注册）。具体流程见 [插件市场维护说明](../marketplace/README.md)。只有装配清单依赖具体组件；不必修改 `AppModel`、全局设置字段或设置导航分支。
+3. 默认随应用注册的组件，在 `Modules/BuiltInModules.swift` 加入 `ModuleBox(YourModule(settings: settings))`。可选市场插件则在 `Modules/MarketplacePlugins.swift` 注册工厂、实现版本，并添加 `marketplace/bundled-catalog.json` 条目（正式发版后再同步公开 `catalog.json`）（不要两处同时注册）。具体流程见 [插件市场维护说明](../marketplace/README.md)。只有装配清单依赖具体组件；不必修改 `AppModel`、全局设置字段或设置导航分支。
 
 工程由 xcodegen 自动收集上述目录中的 Swift 文件。组件会自动获得模块开关、区域/样式选择、排序和设置入口。
 
