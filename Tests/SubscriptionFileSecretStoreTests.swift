@@ -53,6 +53,26 @@ final class SubscriptionFileSecretStoreTests: XCTestCase {
         }
     }
 
+    /// 同一账号 id 在不同服务下必须互相隔离：凭据的附加数据绑定了服务名。
+    func testMiniMaxKeyIsIsolatedFromOtherProviders() throws {
+        try withStore { store in
+            try store.saveGLMKey("glm-secret", accountID: "same")
+            try store.saveMiniMaxKey("minimax-secret", accountID: "same")
+            try store.saveCodexAuth(Data("codex-secret".utf8), accountID: "same")
+            let restarted = SubscriptionFileSecretStore(directory: store.directory)
+            XCTAssertEqual(try restarted.readGLMKey(accountID: "same"), "glm-secret")
+            XCTAssertEqual(try restarted.readMiniMaxKey(accountID: "same"), "minimax-secret")
+            XCTAssertEqual(try restarted.readCodexAuth(accountID: "same"), Data("codex-secret".utf8))
+            // 密文不能跨服务解密：把 MiniMax 密文当 Codex 登录读必须失败。
+            let minimaxURL = store.credentialURL(provider: .minimaxCN, accountID: "same")
+            try Data(contentsOf: minimaxURL).write(to: store.credentialURL(provider: .codex, accountID: "other"))
+            XCTAssertThrowsError(try restarted.readCodexAuth(accountID: "other"))
+            try store.removeMiniMaxKey(accountID: "same")
+            XCTAssertNil(try restarted.readMiniMaxKey(accountID: "same"))
+            XCTAssertEqual(try restarted.readGLMKey(accountID: "same"), "glm-secret")
+        }
+    }
+
     func testNonceRotationAndMissingKeyDoNotOverwriteExistingCredentials() throws {
         try withStore { store in
             try store.saveGLMKey("same-secret", accountID: "one")

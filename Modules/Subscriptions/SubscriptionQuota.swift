@@ -2,9 +2,25 @@ import Foundation
 
 enum SubscriptionProvider: String, Codable, CaseIterable, Identifiable {
     case glm, codex
+    /// rawValue 落进 UserDefaults，是账号的持久化标识；改名会让旧账号无法识别。
+    case minimaxCN = "minimax-cn"
     var id: String { rawValue }
-    var title: String { self == .glm ? "GLM Coding Plan" : "ChatGPT · Codex" }
+    var title: String {
+        switch self {
+        case .glm: return "GLM Coding Plan"
+        case .codex: return "ChatGPT · Codex"
+        case .minimaxCN: return "MiniMax M Plan（中国区）"
+        }
+    }
 
+    /// 卡片角标：标题栏空间有限，只显示服务简称。
+    var badge: String {
+        switch self {
+        case .glm: return "GLM"
+        case .codex: return "Codex"
+        case .minimaxCN: return "MiniMax"
+        }
+    }
 }
 
 struct SubscriptionQuotaWindow: Equatable, Identifiable {
@@ -63,20 +79,32 @@ enum SubscriptionQuotaError: Error, Equatable {
     case invalidResponse, signInRequired, missingKey, missingCLI, timeout, cancelled, network, credentialStorage
     case authFileUnavailable, invalidAuthFile
     case invalidAuthJSON, unsupportedAuthMode, missingAuthToken, authJSONTooLarge
+    /// 密钥有效但没有绑定订阅套餐（按量计费 Key 或未开通 M Plan）。
+    case notInPlan
     case http(Int)
 
     func message(for provider: SubscriptionProvider) -> String {
         switch self {
         case .invalidResponse: return "未识别到额度数据，请查看官方用量页"
         case .signInRequired:
-            return provider == .glm ? "密钥无效或无权查询，请检查 Coding Plan 密钥" : "登录已失效或未使用 ChatGPT 登录，请重新粘贴有效的登录 JSON"
+            switch provider {
+            case .glm: return "密钥无效或无权查询，请检查 Coding Plan 密钥"
+            case .codex: return "登录已失效或未使用 ChatGPT 登录，请重新粘贴有效的登录 JSON"
+            case .minimaxCN: return "订阅 Key 无效或未通过鉴权，请在 M Plan 控制台重新复制订阅 Key"
+            }
+        case .notInPlan: return "当前 Key 未开通 M Plan 订阅，额度查询需使用 sk-cp- 开头的订阅 Key"
         case .authFileUnavailable: return "无法读取登录文件，请重新选择 auth.json"
         case .invalidAuthFile: return "登录数据无效，请粘贴完整的 ChatGPT 登录 JSON"
         case .invalidAuthJSON: return "JSON 格式错误：请粘贴完整对象，包含外层大括号，不要填写文件路径或 Markdown 代码围栏"
         case .unsupportedAuthMode: return "这是 API Key 或其他登录方式；查询订阅额度需要 ChatGPT 登录的 JSON"
         case .missingAuthToken: return "JSON 缺少 tokens.access_token，请粘贴完整的 Codex 登录信息"
         case .authJSONTooLarge: return "登录 JSON 超过 256 KiB，请检查是否粘贴了其他内容"
-        case .missingKey: return "请在组件设置中保存 GLM Coding Plan 密钥"
+        case .missingKey:
+            switch provider {
+            case .glm: return "请在组件设置中保存 GLM Coding Plan 密钥"
+            case .codex: return "请在组件设置中导入 ChatGPT 登录 JSON"
+            case .minimaxCN: return "请在组件设置中保存 MiniMax M Plan 订阅 Key"
+            }
         case .missingCLI: return "未找到 Codex CLI，请安装或在组件设置中指定路径"
         case .timeout: return "查询超时，稍后可重试"
         case .cancelled: return "查询已取消"
@@ -84,6 +112,126 @@ enum SubscriptionQuotaError: Error, Equatable {
         case .credentialStorage: return "无法读写本地加密凭据，请检查 Data 目录权限或恢复完整备份"
         case .http(let status): return "服务暂时不可用（HTTP \(status)）"
         }
+    }
+}
+
+/// MiniMax M Plan 额度响应条目：一个模型桶（general / video 等）的两个额度窗口。
+/// 字段名取自官方 CLI 与公开实现记录的实测响应，缺失字段一律按"未提供"处理。
+private struct MinimaxEntry: Decodable, Equatable {
+    let modelName: String?
+    let intervalRemaining: MinimaxPercent?
+    let intervalStatus: Int?
+    let intervalTotal: Double?
+    let weeklyRemaining: MinimaxPercent?
+    let weeklyStatus: Int?
+    let weeklyTotal: Double?
+    let endTime: Double?
+    let weeklyEndTime: Double?
+    let remainsTime: Double?
+    let weeklyRemainsTime: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case modelName = "model_name"
+        case intervalRemaining = "current_interval_remaining_percent"
+        case intervalStatus = "current_interval_status"
+        case intervalTotal = "current_interval_total_count"
+        case weeklyRemaining = "current_weekly_remaining_percent"
+        case weeklyStatus = "current_weekly_status"
+        case weeklyTotal = "current_weekly_total_count"
+        case endTime = "end_time"
+        case weeklyEndTime = "weekly_end_time"
+        case remainsTime = "remains_time"
+        case weeklyRemainsTime = "weekly_remains_time"
+    }
+}
+
+/// 百分比在实测响应里出现过数字、数字字符串与带百分号字符串三种形态，
+/// 统一收敛为可选 Double，避免因类型差异把有效额度判成无效响应。
+private struct MinimaxPercent: Decodable, Equatable {
+    let value: Double?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() { value = nil; return }
+        if let number = try? container.decode(Double.self) { value = number; return }
+        var text = (try? container.decode(String.self)) ?? ""
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasSuffix("%") { text.removeLast() }
+        value = Double(text)
+    }
+}
+
+private struct MinimaxBaseResp: Decodable {
+    let statusCode: Int?
+    enum CodingKeys: String, CodingKey { case statusCode = "status_code" }
+}
+
+/// 套餐名可能出现在根层或 data 层，字段名有多个历史别名，按顺序取第一个非空值。
+private struct MinimaxPlanFields {
+    let currentSubscribeTitle: String?
+    let planName: String?
+    let comboTitle: String?
+    let currentPlanTitle: String?
+
+    var resolved: String? {
+        [currentSubscribeTitle, planName, comboTitle, currentPlanTitle]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
+}
+
+/// 额度列表既可能在根层，也可能在 data 包裹层（控制台口径），两种都要认。
+private struct MinimaxData: Decodable {
+    let modelRemains: [MinimaxEntry]?
+    let planTitle: String?
+
+    enum CodingKeys: String, CodingKey {
+        case modelRemains = "model_remains"
+        case currentSubscribeTitle = "current_subscribe_title"
+        case planName = "plan_name"
+        case comboTitle = "combo_title"
+        case currentPlanTitle = "current_plan_title"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        modelRemains = try container.decodeIfPresent([MinimaxEntry].self, forKey: .modelRemains)
+        planTitle = MinimaxPlanFields(
+            currentSubscribeTitle: try? container.decodeIfPresent(String.self, forKey: .currentSubscribeTitle),
+            planName: try? container.decodeIfPresent(String.self, forKey: .planName),
+            comboTitle: try? container.decodeIfPresent(String.self, forKey: .comboTitle),
+            currentPlanTitle: try? container.decodeIfPresent(String.self, forKey: .currentPlanTitle)
+        ).resolved
+    }
+}
+
+private struct MinimaxEnvelope: Decodable {
+    let baseResp: MinimaxBaseResp?
+    let modelRemains: [MinimaxEntry]?
+    let data: MinimaxData?
+    let planTitle: String?
+
+    enum CodingKeys: String, CodingKey {
+        case baseResp = "base_resp"
+        case modelRemains = "model_remains"
+        case data
+        case currentSubscribeTitle = "current_subscribe_title"
+        case planName = "plan_name"
+        case comboTitle = "combo_title"
+        case currentPlanTitle = "current_plan_title"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        baseResp = try container.decodeIfPresent(MinimaxBaseResp.self, forKey: .baseResp)
+        modelRemains = try container.decodeIfPresent([MinimaxEntry].self, forKey: .modelRemains)
+        data = try container.decodeIfPresent(MinimaxData.self, forKey: .data)
+        planTitle = MinimaxPlanFields(
+            currentSubscribeTitle: try? container.decodeIfPresent(String.self, forKey: .currentSubscribeTitle),
+            planName: try? container.decodeIfPresent(String.self, forKey: .planName),
+            comboTitle: try? container.decodeIfPresent(String.self, forKey: .comboTitle),
+            currentPlanTitle: try? container.decodeIfPresent(String.self, forKey: .currentPlanTitle)
+        ).resolved
     }
 }
 
@@ -201,5 +349,83 @@ enum SubscriptionQuotaParser {
         }
         guard !windows.isEmpty else { throw SubscriptionQuotaError.invalidResponse }
         return SubscriptionQuotaSnapshot(plan: bucket.planType, windows: windows, fetchedAt: now)
+    }
+
+    /// MiniMax M Plan（中国区）只读额度接口 `GET /v1/token_plan/remains`。
+    /// 端点、请求头与响应结构来自官方文档、官方 CLI（mmx-cli）与公开实现的实测样本：
+    /// 顶层为 `base_resp` + `model_remains`（控制台口径会再包一层 data），
+    /// 每个条目按模型桶（general / video 等）给出 5 小时窗口与每周窗口的剩余百分比。
+    /// 接口只给"剩余百分比"，已用百分比由 100 减去得到；计数常年为 0，不参与推算。
+    static func minimax(_ data: Data, now: Date = Date()) throws -> SubscriptionQuotaSnapshot {
+        guard let envelope = try? JSONDecoder().decode(MinimaxEnvelope.self, from: data) else {
+            throw SubscriptionQuotaError.invalidResponse
+        }
+        // 接口恒返回 HTTP 200，鉴权与业务失败都放在 base_resp 里，必须看业务码。
+        if let code = envelope.baseResp?.statusCode, code != 0 {
+            switch code {
+            case 1004, 1016: throw SubscriptionQuotaError.signInRequired
+            case 2062: throw SubscriptionQuotaError.notInPlan
+            default: throw SubscriptionQuotaError.invalidResponse
+            }
+        }
+        let entries = envelope.modelRemains ?? envelope.data?.modelRemains ?? []
+        guard !entries.isEmpty else { throw SubscriptionQuotaError.invalidResponse }
+        // 不在套餐内的条目：两个窗口都不适用且计数为 0，按官方 CLI 的判定口径跳过。
+        let usable = entries.filter { !Self.minimaxNotInPlan($0) }
+        guard !usable.isEmpty else { throw SubscriptionQuotaError.notInPlan }
+        // general 桶同时带 5 小时与每周窗口，是套餐主额度；缺失时退回第一个可用条目。
+        let primaryIndex = usable.firstIndex { $0.modelName == "general" } ?? 0
+        var windows: [SubscriptionQuotaWindow] = []
+        for (index, entry) in usable.enumerated() {
+            let isPrimary = index == primaryIndex
+            let prefix = isPrimary ? "" : "\(Self.minimaxBucketName(entry.modelName)) · "
+            // 5 小时窗口只对非视频模型生效；状态 3 表示该窗口不在套餐内，不补零展示。
+            if let percent = entry.intervalRemaining?.value, percent.isFinite, entry.intervalStatus != 3 {
+                windows.append(SubscriptionQuotaWindow(id: "interval-\(index)",
+                    title: prefix + "5 小时", usedPercent: Self.minimaxUsedPercent(remaining: percent),
+                    resetsAt: Self.minimaxReset(end: entry.endTime, remains: entry.remainsTime, now: now)))
+            }
+            if let percent = entry.weeklyRemaining?.value, percent.isFinite {
+                windows.append(SubscriptionQuotaWindow(id: "weekly-\(index)",
+                    title: prefix + "每周", usedPercent: Self.minimaxUsedPercent(remaining: percent),
+                    resetsAt: Self.minimaxReset(end: entry.weeklyEndTime, remains: entry.weeklyRemainsTime, now: now)))
+            }
+        }
+        guard !windows.isEmpty else { throw SubscriptionQuotaError.notInPlan }
+        let plan = envelope.planTitle ?? envelope.data?.planTitle
+        return SubscriptionQuotaSnapshot(plan: plan, windows: windows, fetchedAt: now)
+    }
+
+    /// 两个窗口都不在套餐内且计数为 0：官方 CLI 判定为"不在当前套餐中"。
+    private static func minimaxNotInPlan(_ entry: MinimaxEntry) -> Bool {
+        entry.intervalStatus == 3 && entry.weeklyStatus == 3 &&
+            (entry.intervalTotal ?? 0) == 0 && (entry.weeklyTotal ?? 0) == 0
+    }
+
+    /// 模型桶名：官方只区分 general（通用）与 video（视频），其余按服务端原名截断显示。
+    private static func minimaxBucketName(_ name: String?) -> String {
+        switch name {
+        case "general": return "通用"
+        case "video": return "视频"
+        case .some(let value) where !value.isEmpty: return String(value.prefix(16))
+        default: return "其他"
+        }
+    }
+
+    /// 接口给的是剩余百分比，展示口径统一为已用；越界值夹紧到 0…100，不外推。
+    private static func minimaxUsedPercent(remaining: Double) -> Double {
+        min(100, max(0, 100 - remaining))
+    }
+
+    /// 重置时刻优先取窗口结束的绝对时刻（epoch 毫秒）；
+    /// 缺失时用"距重置剩余毫秒"推算，两种形态都来自官方 CLI 的同一响应。
+    private static func minimaxReset(end: Double?, remains: Double?, now: Date) -> Date? {
+        if let end, end.isFinite, end > 0 {
+            let seconds = end >= 10_000_000_000 ? end / 1000 : end
+            // 上限取 2100 年之前，防止把任意大数字当成有效重置时刻。
+            if seconds < 4_102_444_800 { return Date(timeIntervalSince1970: seconds) }
+        }
+        if let remains, remains.isFinite, remains > 0 { return now.addingTimeInterval(remains / 1000) }
+        return nil
     }
 }

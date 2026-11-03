@@ -148,4 +148,11 @@ struct SubscriptionFileSecretStore: SubscriptionSecretStore {
     func readCodexAuth(accountID: String) throws -> Data? { try read(.codex, accountID) }
     func saveCodexAuth(_ data: Data, accountID: String) throws { try save(data, .codex, accountID) }
     func removeCodexAuth(accountID: String) throws { try remove(.codex, accountID) }
+    func readMiniMaxKey(accountID: String) throws -> String? {
+        guard let data = try read(.minimaxCN, accountID) else { return nil }
+        guard let value = String(data: data, encoding: .utf8) else { throw SubscriptionQuotaError.credentialStorage }
+        return value
+    }
+    func saveMiniMaxKey(_ key: String, accountID: String) throws { try save(Data(key.utf8), .minimaxCN, accountID) }
+    func removeMiniMaxKey(accountID: String) throws { try remove(.minimaxCN, accountID) }
 }

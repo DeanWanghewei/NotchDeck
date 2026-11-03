@@ -5,7 +5,7 @@ import SwiftUI
 /// 每个账号独立持有查询与结果；别名、样式和其他账号的改动不重启已有查询。
 final class SubscriptionQuotaModule: ObservableObject, NotchModule {
     static let descriptor = ModuleDescriptor(id: "subscriptions", title: "订阅额度", systemImage: "chart.bar.xaxis",
-        summary: "查看多个 GLM Coding Plan 与 ChatGPT · Codex 账号的套餐额度",
+        summary: "查看多个 GLM Coding Plan、ChatGPT · Codex 与 MiniMax M Plan 账号的套餐额度",
         defaultConfig: ModuleConfig(enabled: false, placement: .tab, displayModeID: "cards"),
         presentation: ModulePresentationOptions(displayModes: [
             ModuleDisplayMode(id: "cards", title: "百分比长条"),
@@ -265,6 +265,11 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
                             } catch { completion(.failure(.credentialStorage)) }
                         }
                     }
+                case .minimaxCN:
+                    guard let key = try secrets.readMiniMaxKey(accountID: id), !key.isEmpty else {
+                        completion(.failure(.missingKey)); continue
+                    }
+                    requests[id] = clients.minimax(key, completion)
                 }
             } catch { completion(.failure(.credentialStorage)) }
         }
@@ -286,6 +291,29 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
         guard storeAccount(account) else { return false }
         configure()
         settingsMessage = "GLM 账号已保存，密钥已加密保存在应用 Data 目录。"
+        return true
+    }
+
+    @discardableResult
+    func saveMiniMaxAccount(_ account: SubscriptionAccount, key supplied: String) -> Bool {
+        guard account.provider == .minimaxCN, validAlias(account.alias) else { return false }
+        let key = supplied.trimmingCharacters(in: .whitespacesAndNewlines)
+        let exists = preferences.value.accounts.contains { $0.id == account.id && $0.provider == .minimaxCN }
+        if !key.isEmpty || !exists {
+            guard !key.isEmpty, key.utf8.count <= 4096, key.unicodeScalars.allSatisfy({ (33...126).contains($0.value) }) else {
+                settingsMessage = "请输入有效的 MiniMax M Plan 订阅 Key。"; return false
+            }
+            // 按量计费 Key 走的是余额接口，查不到套餐额度；提前提示比等到查询失败更清楚。
+            if key.hasPrefix("sk-api-") {
+                settingsMessage = "这是按量计费 API Key，额度查询需要 M Plan 订阅 Key（sk-cp- 开头）。"; return false
+            }
+            do { try secrets.saveMiniMaxKey(key, accountID: account.id) }
+            catch { settingsMessage = SubscriptionQuotaError.credentialStorage.message(for: .minimaxCN); return false }
+            invalidate(account.id)
+        }
+        guard storeAccount(account) else { return false }
+        configure()
+        settingsMessage = "MiniMax 账号已保存，订阅 Key 已加密保存在应用 Data 目录。"
         return true
     }
 
@@ -358,8 +386,11 @@ final class SubscriptionQuotaModule: ObservableObject, NotchModule {
     func removeAccount(_ id: String) {
         guard let account = preferences.value.accounts.first(where: { $0.id == id }) else { return }
         do {
-            if account.provider == .glm { try secrets.removeGLMKey(accountID: id) }
-            else { try secrets.removeCodexAuth(accountID: id) }
+            switch account.provider {
+            case .glm: try secrets.removeGLMKey(accountID: id)
+            case .codex: try secrets.removeCodexAuth(accountID: id)
+            case .minimaxCN: try secrets.removeMiniMaxKey(accountID: id)
+            }
             if verifyingAccountID == id { cancelAccountVerification() }
             invalidate(id)
             preferences.update { $0.accounts.removeAll { $0.id == id } }

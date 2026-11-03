@@ -25,7 +25,7 @@ struct SubscriptionQuotaView: View {
             if module.displayedAccounts.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("暂无启用的订阅账号").font(.caption).foregroundStyle(.secondary)
-                    Button("添加 GLM / Codex 账号") { openSettings() }.controlSize(.small)
+                    Button("添加 GLM / Codex / MiniMax 账号") { openSettings() }.controlSize(.small)
                 }.padding(.vertical, 8)
             }
             if rings {
@@ -75,7 +75,7 @@ struct SubscriptionQuotaView: View {
                 Text(account.displayName(in: module.displayedAccounts))
                     .font(.system(size: 12, weight: .semibold)).lineLimit(1)
                     .help(account.displayName(in: module.displayedAccounts))
-                Text(account.provider == .glm ? "GLM" : "Codex")
+                Text(account.provider.badge)
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                     .help([account.provider.title, snapshot?.plan?.capitalized].compactMap { $0 }.joined(separator: " · "))
                 Spacer(minLength: 4)

@@ -10,7 +10,8 @@ NotchDeck 是 macOS 刘海信息岛（灵动岛）应用：SwiftUI + 无边框 N
 | `docs/design-conventions.md` | **项目约束**：颜色与数据展示规范（详见下） |
 | `docs/custom-items.md` | 自定义命令小部件的用户文档（写法与规则） |
 | `docs/module-development.md` | 内置 Swift 组件接入：描述、生命周期、独立设置与配置、测试要求 |
-| `docs/subscription-quotas.md` | GLM Coding Plan / ChatGPT · Codex 订阅额度配置、凭据与接口边界 |
+| `docs/subscription-quotas.md` | GLM Coding Plan / ChatGPT · Codex / MiniMax M Plan 订阅额度配置、凭据与接口边界 |
+| `docs/minimax-quota-api.md` | MiniMax 国内区订阅额度接口调研：端点、请求头、响应结构、业务码与来源索引 |
 | `marketplace/README.md` | 插件市场目录、GitHub 维护、随应用分发约定与适配脚本（JSC 沙箱）安全边界 |
 | `docs/macos-notes.md` | 平台实证笔记：各 macOS 版本的窗口/Space/电源陷阱与探针结论（开发参考，README 只留摘要） |
 | `docs/PROJECT_REVIEW.md` | 一次性项目检查与修复记录（2026-09-13，历史存档，不随开发更新） |

@@ -15,7 +15,7 @@ struct SubscriptionAccount: Codable, Equatable, Identifiable {
         if !name.isEmpty { return name }
         let peers = accounts.filter { $0.provider == provider }
         let number = (peers.firstIndex { $0.id == id } ?? 0) + 1
-        return "\(provider == .glm ? "GLM" : "Codex") 账号 \(number)"
+        return "\(provider.badge) 账号 \(number)"
     }
 
 

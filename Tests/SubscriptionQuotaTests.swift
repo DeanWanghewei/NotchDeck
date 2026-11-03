@@ -77,6 +77,143 @@ final class SubscriptionQuotaTests: XCTestCase {
         XCTAssertEqual(snapshot.windows[1].resetsAt, Date(timeIntervalSince1970: 1_781_778_751.996))
     }
 
+    // MARK: - MiniMax M Plan
+
+    /// 响应样本逐字取自 CodexBar 的 MiniMax 固件：general 桶带两个窗口，
+    /// video 桶两个窗口都不在套餐内（状态 3、计数 0），按官方 CLI 口径跳过。
+    func testMiniMaxReadsWindowsFromOfficialPayload() throws {
+        let data = Data(#"""
+        {"model_remains":[
+          {"start_time":1782043200000,"end_time":1782057600000,"remains_time":7003536,
+           "current_interval_total_count":0,"current_interval_usage_count":0,"model_name":"general",
+           "current_weekly_total_count":0,"current_weekly_usage_count":0,
+           "weekly_start_time":1781452800000,"weekly_end_time":1782057600000,"weekly_remains_time":7003536,
+           "current_interval_status":1,"current_interval_remaining_percent":100,
+           "current_weekly_status":1,"current_weekly_remaining_percent":70,"weekly_boost_permille":1500},
+          {"start_time":1781971200000,"end_time":1782057600000,"remains_time":7003536,
+           "current_interval_total_count":0,"current_interval_usage_count":0,"model_name":"video",
+           "current_weekly_total_count":0,"current_weekly_usage_count":0,
+           "weekly_start_time":1781452800000,"weekly_end_time":1782057600000,"weekly_remains_time":7003536,
+           "current_interval_status":3,"current_interval_remaining_percent":100,
+           "current_weekly_status":3,"current_weekly_remaining_percent":100}],
+         "base_resp":{"status_code":0,"status_msg":"success"}}
+        """#.utf8)
+        let snapshot = try SubscriptionQuotaParser.minimax(data)
+        XCTAssertEqual(snapshot.windows.map(\.title), ["5 小时", "每周"])
+        XCTAssertEqual(snapshot.windows.map(\.usedPercent), [0, 30])
+        XCTAssertEqual(snapshot.windows.map(\.remainingPercent), [100, 70])
+        XCTAssertEqual(snapshot.windows[0].resetsAt, Date(timeIntervalSince1970: 1_782_057_600))
+        XCTAssertEqual(snapshot.windows[1].resetsAt, Date(timeIntervalSince1970: 1_782_057_600))
+    }
+
+    /// 百分比实测有数字、数字字符串与带百分号字符串三种形态；控制台口径还会多包一层 data。
+    func testMiniMaxAcceptsStringPercentsAndDataWrapper() throws {
+        let data = Data(#"{"base_resp":{"status_code":0,"status_msg":"success"},"data":{"current_subscribe_title":"Token Plan Plus","points_balance":"14000","model_remains":[{"model_name":"general","current_interval_remaining_percent":"96%","current_interval_status":1,"current_weekly_remaining_percent":"70","current_weekly_status":1}]}}"#.utf8)
+        let snapshot = try SubscriptionQuotaParser.minimax(data)
+        XCTAssertEqual(snapshot.plan, "Token Plan Plus")
+        XCTAssertEqual(snapshot.windows.map(\.title), ["5 小时", "每周"])
+        XCTAssertEqual(snapshot.windows.map(\.usedPercent), [4, 30])
+        // 未提供重置时刻时不能凭空补一个。
+        XCTAssertTrue(snapshot.windows.allSatisfy { $0.resetsAt == nil })
+    }
+
+    /// 缺少绝对重置时刻时，用"距重置剩余毫秒"兜底推算，不显示为未知。
+    func testMiniMaxFallsBackToRemainingMillisecondsForReset() throws {
+        let now = Date(timeIntervalSince1970: 1_782_057_600)
+        let data = Data(#"{"model_remains":[{"model_name":"general","current_interval_status":1,"current_interval_remaining_percent":40,"remains_time":3600000,"current_weekly_status":1,"current_weekly_remaining_percent":10,"weekly_remains_time":7200000}],"base_resp":{"status_code":0}}"#.utf8)
+        let snapshot = try SubscriptionQuotaParser.minimax(data, now: now)
+        XCTAssertEqual(snapshot.windows.map(\.usedPercent), [60, 90])
+        XCTAssertEqual(snapshot.windows[0].resetsAt, now.addingTimeInterval(3600))
+        XCTAssertEqual(snapshot.windows[1].resetsAt, now.addingTimeInterval(7200))
+    }
+
+    /// 视频桶只有周窗口：区间状态 3 时不补一条不存在的 5 小时额度。
+    func testMiniMaxSkipsWindowsThatAreNotInThePlan() throws {
+        let data = Data(#"{"model_remains":[{"model_name":"video","current_interval_status":3,"current_interval_remaining_percent":100,"current_weekly_status":1,"current_weekly_remaining_percent":40,"current_weekly_total_count":10}],"base_resp":{"status_code":0}}"#.utf8)
+        let snapshot = try SubscriptionQuotaParser.minimax(data)
+        XCTAssertEqual(snapshot.windows.map(\.title), ["每周"])
+        XCTAssertEqual(snapshot.windows.map(\.usedPercent), [60])
+    }
+
+    func testMiniMaxBusinessFailuresNeverBecomeZeroUsage() throws {
+        XCTAssertThrowsError(try SubscriptionQuotaParser.minimax(Data(#"{"base_resp":{"status_code":1004,"status_msg":"login fail"}}"#.utf8))) {
+            XCTAssertEqual($0 as? SubscriptionQuotaError, .signInRequired)
+        }
+        XCTAssertThrowsError(try SubscriptionQuotaParser.minimax(Data(#"{"base_resp":{"status_code":1016,"status_msg":"invalid api key"}}"#.utf8))) {
+            XCTAssertEqual($0 as? SubscriptionQuotaError, .signInRequired)
+        }
+        XCTAssertThrowsError(try SubscriptionQuotaParser.minimax(Data(#"{"base_resp":{"status_code":2062,"status_msg":"no active token plan"}}"#.utf8))) {
+            XCTAssertEqual($0 as? SubscriptionQuotaError, .notInPlan)
+        }
+        for input in ["{}", "invalid", #"{"base_resp":{"status_code":0},"model_remains":[]}"#,
+                      #"{"model_remains":[{"model_name":"general","current_interval_status":3,"current_weekly_status":3}]}"#] {
+            XCTAssertThrowsError(try SubscriptionQuotaParser.minimax(Data(input.utf8)), input)
+        }
+    }
+
+    func testMiniMaxTransportUsesFixedCNHostAndBearerAuth() {
+        let finished = expectation(description: "订阅 Key 鉴权失败")
+        QuotaURLProtocol.response = { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://api.minimax.cn/v1/token_plan/remains")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-only-key")
+            return (200, Data(#"{"base_resp":{"status_code":1004,"status_msg":"login fail"}}"#.utf8))
+        }
+        defer { QuotaURLProtocol.response = nil }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [QuotaURLProtocol.self]
+        let request = MiniMaxQuotaQuery.start(key: "test-only-key", configuration: config) { result in
+            self.assertFailure(result, .signInRequired)
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
+        withExtendedLifetime(request) {}
+    }
+
+    @MainActor
+    func testMiniMaxAccountUsesItsOwnKeyAndReportsMissingCredential() {
+        withFixture { settings, secrets, client in
+            let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
+            let account = SubscriptionAccount(provider: .minimaxCN, alias: "个人")
+            secrets.minimaxKeys[account.id] = "test-only-not-a-real-key"
+            module.preferences.update { $0.accounts = [account] }
+            module.start()
+            defer { module.stop() }
+            XCTAssertEqual(client.minimax.map(\.key), ["test-only-not-a-real-key"])
+            XCTAssertEqual(client.glm.count, 0)
+            XCTAssertEqual(client.codex.count, 0)
+            client.minimax[0].completion(.success(.fixture(for: .minimaxCN)))
+            settle()
+            XCTAssertNotNil(module.snapshots[account.id])
+
+            // 没有订阅 Key 时不联网，直接提示缺少凭据。
+            let empty = SubscriptionAccount(provider: .minimaxCN)
+            module.preferences.update { $0.accounts = [account, empty] }
+            settle()
+            module.refresh()
+            settle()
+            XCTAssertEqual(module.errors[empty.id], .missingKey)
+        }
+    }
+
+    @MainActor
+    func testMiniMaxSaveRejectsPayAsYouGoKeyAndKeepsOtherProvidersUntouched() {
+        withFixture { settings, secrets, client in
+            let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
+            let account = SubscriptionAccount(provider: .minimaxCN)
+            XCTAssertFalse(module.saveMiniMaxAccount(account, key: "sk-api-paygo-key"))
+            XCTAssertTrue(secrets.minimaxKeys.isEmpty)
+            XCTAssertTrue(module.preferences.value.accounts.isEmpty)
+            XCTAssertTrue(module.settingsMessage?.contains("按量计费") == true)
+
+            XCTAssertTrue(module.saveMiniMaxAccount(account, key: "sk-cp-subscription-key"))
+            XCTAssertEqual(secrets.minimaxKeys[account.id], "sk-cp-subscription-key")
+            XCTAssertTrue(secrets.keys.isEmpty)
+            XCTAssertTrue(secrets.auth.isEmpty)
+            module.removeAccount(account.id)
+            XCTAssertTrue(secrets.minimaxKeys.isEmpty)
+        }
+    }
+
     func testRemainingDurationUsesMinuteGranularity() {
         let now = Date(timeIntervalSince1970: 1_782_086_400)
         func window(seconds: TimeInterval) -> SubscriptionQuotaWindow {
@@ -825,8 +962,11 @@ final class SubscriptionQuotaTests: XCTestCase {
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         withFixture { settings, secrets, client in
             let module = SubscriptionQuotaModule(settings: settings, clients: client.clients, secrets: secrets)
-            let accounts = [SubscriptionAccount(provider: .glm, alias: "个人订阅"), SubscriptionAccount(provider: .glm, alias: "工作订阅")]
+            let accounts = [SubscriptionAccount(provider: .glm, alias: "个人订阅"),
+                            SubscriptionAccount(provider: .glm, alias: "工作订阅"),
+                            SubscriptionAccount(provider: .minimaxCN, alias: "M Plan")]
             accounts.forEach { secrets.keys[$0.id] = "test-only-not-a-real-key" }
+            accounts.filter { $0.provider == .minimaxCN }.forEach { secrets.minimaxKeys[$0.id] = "test-only-not-a-real-key" }
             module.preferences.update { $0.accounts = accounts }
             module.start()
             defer { module.stop() }
@@ -837,7 +977,14 @@ final class SubscriptionQuotaTests: XCTestCase {
                       resetsAt: Date().addingTimeInterval(2 * 86_400 + 3 * 3600)),
                 .init(id: "extra", title: "工具调用", usedPercent: 0, resetsAt: Date().addingTimeInterval(-60)),
             ], fetchedAt: Date())
+            let minimaxSnapshot = SubscriptionQuotaSnapshot(plan: "M Plan Plus", windows: [
+                .init(id: "interval", title: "5 小时", usedPercent: 72,
+                      resetsAt: Date().addingTimeInterval(2 * 3600 + 12 * 60)),
+                .init(id: "weekly", title: "每周", usedPercent: 19,
+                      resetsAt: Date().addingTimeInterval(3 * 86_400 + 5 * 3600)),
+            ], fetchedAt: Date())
             client.glm.forEach { $0.completion(.success(snapshot)) }
+            client.minimax.forEach { $0.completion(.success(minimaxSnapshot)) }
             settle()
             for dark in [false, true] {
                 for mode in ["cards", "rings", "rings-narrow", "compact", "settings"] {
@@ -884,7 +1031,8 @@ final class SubscriptionQuotaTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         test(SettingsStore(defaults: defaults), QuotaTestSecrets(), QuotaTestClient())
         let saved = defaults.data(forKey: "modules.preferences.subscriptions") ?? Data()
-        for secret in ["test-only-not-a-real-key", "replacement-test-key", "synthetic-test-token", "rotated-token"] {
+        for secret in ["test-only-not-a-real-key", "replacement-test-key", "synthetic-test-token", "rotated-token",
+                       "sk-cp-subscription-key", "sk-api-paygo-key"] {
             XCTAssertFalse(String(decoding: saved, as: UTF8.self).contains(secret))
         }
     }
@@ -899,6 +1047,7 @@ final class SubscriptionQuotaTests: XCTestCase {
 
 private final class QuotaTestSecrets: SubscriptionSecretStore {
     var keys: [String: String] = [:]
+    var minimaxKeys: [String: String] = [:]
     var auth: [String: Data] = [:]
     var readCount = 0
     var failCodexSave = false
@@ -911,14 +1060,19 @@ private final class QuotaTestSecrets: SubscriptionSecretStore {
         auth[accountID] = data
     }
     func removeCodexAuth(accountID: String) throws { auth.removeValue(forKey: accountID) }
+    func readMiniMaxKey(accountID: String) throws -> String? { readCount += 1; return minimaxKeys[accountID] }
+    func saveMiniMaxKey(_ key: String, accountID: String) throws { minimaxKeys[accountID] = key }
+    func removeMiniMaxKey(accountID: String) throws { minimaxKeys.removeValue(forKey: accountID) }
 }
 
 private final class QuotaTestClient {
     struct GLM { let key: String; let adapter: GLMAdapterConfiguration?; let request: SubscriptionQuotaRequest; let completion: SubscriptionQuotaCompletion }
     struct Codex { let input: CodexQuotaInput; let request: SubscriptionQuotaRequest; let completion: CodexQuotaCompletion }
+    struct MiniMax { let key: String; let request: SubscriptionQuotaRequest; let completion: SubscriptionQuotaCompletion }
     var glm: [GLM] = []
     var codex: [Codex] = []
-    var count: Int { glm.count + codex.count }
+    var minimax: [MiniMax] = []
+    var count: Int { glm.count + codex.count + minimax.count }
     var clients: SubscriptionQuotaClients {
         SubscriptionQuotaClients(glm: { key, adapter, completion in
             let request = SubscriptionQuotaRequest()
@@ -927,6 +1081,10 @@ private final class QuotaTestClient {
         }, codex: { input, completion in
             let request = SubscriptionQuotaRequest()
             self.codex.append(Codex(input: input, request: request, completion: completion))
+            return request
+        }, minimax: { key, completion in
+            let request = SubscriptionQuotaRequest()
+            self.minimax.append(MiniMax(key: key, request: request, completion: completion))
             return request
         })
     }
@@ -948,7 +1106,13 @@ private final class QuotaURLProtocol: URLProtocol {
 
 private extension SubscriptionQuotaSnapshot {
     static func fixture(for provider: SubscriptionProvider, now: Date = Date()) -> Self {
-        Self(plan: provider == .glm ? "Pro · 示例" : "Plus · 示例", windows: [
+        let plan: String
+        switch provider {
+        case .glm: plan = "Pro · 示例"
+        case .codex: plan = "Plus · 示例"
+        case .minimaxCN: plan = "M Plan · 示例"
+        }
+        return Self(plan: plan, windows: [
             SubscriptionQuotaWindow(id: "short", title: "5 小时", usedPercent: provider == .glm ? 32 : 68,
                 resetsAt: now.addingTimeInterval(2 * 3600 + 40 * 60)),
             SubscriptionQuotaWindow(id: "weekly", title: "每周", usedPercent: provider == .glm ? 57 : 24,

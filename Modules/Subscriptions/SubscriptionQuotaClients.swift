@@ -41,6 +41,8 @@ struct GLMAdapterConfiguration {
 }
 
 typealias SubscriptionQuotaFetch = (String, GLMAdapterConfiguration?, @escaping SubscriptionQuotaCompletion) -> SubscriptionQuotaRequest
+/// MiniMax 订阅 Key 直查：不需要市场脚本适配层，只按内置端点与内置解析。
+typealias MiniMaxQuotaFetch = (String, @escaping SubscriptionQuotaCompletion) -> SubscriptionQuotaRequest
 
 enum CodexQuotaAuth {
     case localCLI
@@ -63,6 +65,7 @@ typealias CodexQuotaCompletion = (CodexQuotaResult) -> Void
 struct SubscriptionQuotaClients {
     var glm: SubscriptionQuotaFetch
     var codex: (CodexQuotaInput, @escaping CodexQuotaCompletion) -> SubscriptionQuotaRequest
+    var minimax: MiniMaxQuotaFetch
 
     static let live = Self(glm: { key, adapter, completion in
         GLMQuotaQuery.start(key: key, adapter: adapter, completion: completion)
@@ -72,6 +75,8 @@ struct SubscriptionQuotaClients {
             completion(CodexQuotaQuery.query(input, cancellation: request))
         }
         return request
+    }, minimax: { key, completion in
+        MiniMaxQuotaQuery.start(key: key, completion: completion)
     })
 }
 
@@ -82,6 +87,9 @@ protocol SubscriptionSecretStore {
     func readCodexAuth(accountID: String) throws -> Data?
     func saveCodexAuth(_ data: Data, accountID: String) throws
     func removeCodexAuth(accountID: String) throws
+    func readMiniMaxKey(accountID: String) throws -> String?
+    func saveMiniMaxKey(_ key: String, accountID: String) throws
+    func removeMiniMaxKey(accountID: String) throws
 }
 
 /// 只在用户导入时读取指定文件；账号元数据不保存 token，原文件不会被修改。
@@ -135,22 +143,30 @@ enum CodexAuthDocument {
     }
 }
 
-/// 内置端点固定为官方插件的只读接口；禁止重定向，避免把 Authorization 发往其他主机。
-/// 市场脚本可通过 adapter 覆盖端点与解析，但主机须先通过 GLMScriptAdapter 白名单。
-final class GLMQuotaQuery: NSObject, URLSessionDataDelegate {
-    static let defaultEndpoint = URL(string: "https://open.bigmodel.cn/api/monitor/usage/quota/limit")!
+/// 订阅额度的通用只读查询：固定端点 + 固定请求头 + 固定解析器。
+/// 禁止重定向，避免把 Authorization 发往其他主机；凭据只在发送前替换 "{credential}" 占位。
+/// GLM 的端点与解析可被市场脚本覆盖，但主机须先通过 GLMScriptAdapter 白名单。
+final class SubscriptionQuotaHTTPQuery: NSObject, URLSessionDataDelegate {
+    /// 响应体上限 256 KiB：额度响应只有几百字节，超限即视为异常响应。
+    static let maximumBytes = 256 * 1024
 
     private var completion: SubscriptionQuotaCompletion?
     private var buffer = Data()
     private var session: URLSession?
-    private var parse: ((Data) throws -> SubscriptionQuotaSnapshot) = { try SubscriptionQuotaParser.glm($0) }
+    private let parse: (Data) throws -> SubscriptionQuotaSnapshot
 
-    static func start(key: String, configuration: URLSessionConfiguration = .ephemeral,
-                      adapter: GLMAdapterConfiguration? = nil,
+    private init(parse: @escaping (Data) throws -> SubscriptionQuotaSnapshot) {
+        self.parse = parse
+        super.init()
+    }
+
+    /// 请求头模板里的 "{credential}" 只在发送前一刻替换，端点与模板本身不含密钥。
+    static func start(endpoint: URL, credential: String, headers: [String: String],
+                      configuration: URLSessionConfiguration = .ephemeral,
+                      parse: @escaping (Data) throws -> SubscriptionQuotaSnapshot,
                       completion: @escaping SubscriptionQuotaCompletion) -> SubscriptionQuotaRequest {
-        let query = GLMQuotaQuery()
+        let query = SubscriptionQuotaHTTPQuery(parse: parse)
         query.completion = completion
-        if let adapter { query.parse = adapter.parse }
         let config = configuration
         config.timeoutIntervalForRequest = 12
         config.timeoutIntervalForResource = 15
@@ -158,10 +174,9 @@ final class GLMQuotaQuery: NSObject, URLSessionDataDelegate {
         config.urlCache = nil
         let session = URLSession(configuration: config, delegate: query, delegateQueue: nil)
         query.session = session
-        var request = URLRequest(url: adapter?.url ?? defaultEndpoint)
-        // "{credential}" 只在发送前一刻替换；URL 与模板来自脚本或内置常量，均不含密钥。
-        for (name, template) in adapter?.headers ?? ["Authorization": "{credential}"] {
-            request.setValue(template.replacingOccurrences(of: "{credential}", with: key), forHTTPHeaderField: name)
+        var request = URLRequest(url: endpoint)
+        for (name, template) in headers {
+            request.setValue(template.replacingOccurrences(of: "{credential}", with: credential), forHTTPHeaderField: name)
         }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let task = session.dataTask(with: request)
@@ -188,7 +203,7 @@ final class GLMQuotaQuery: NSObject, URLSessionDataDelegate {
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        guard buffer.count + data.count <= 256 * 1024 else { finish(.failure(.invalidResponse)); return }
+        guard buffer.count + data.count <= Self.maximumBytes else { finish(.failure(.invalidResponse)); return }
         buffer.append(data)
     }
 
@@ -209,6 +224,37 @@ final class GLMQuotaQuery: NSObject, URLSessionDataDelegate {
         session?.invalidateAndCancel()
         session = nil
         completion?(result)
+    }
+}
+
+/// GLM 额度查询：内置端点为官方插件的只读接口，市场脚本可覆盖端点与解析。
+enum GLMQuotaQuery {
+    static let defaultEndpoint = URL(string: "https://open.bigmodel.cn/api/monitor/usage/quota/limit")!
+
+    static func start(key: String, configuration: URLSessionConfiguration = .ephemeral,
+                      adapter: GLMAdapterConfiguration? = nil,
+                      completion: @escaping SubscriptionQuotaCompletion) -> SubscriptionQuotaRequest {
+        let parse: (Data) throws -> SubscriptionQuotaSnapshot
+        if let adapter { parse = adapter.parse } else { parse = { try SubscriptionQuotaParser.glm($0) } }
+        return SubscriptionQuotaHTTPQuery.start(endpoint: adapter?.url ?? defaultEndpoint, credential: key,
+                                                headers: adapter?.headers ?? ["Authorization": "{credential}"],
+                                                configuration: configuration, parse: parse, completion: completion)
+    }
+}
+
+/// MiniMax M Plan（中国区）额度查询：只读接口，固定中国区主机。
+enum MiniMaxQuotaQuery {
+    /// 中国区域名：官方文档与官方 CLI（mmx-cli）的 cn 区域都指向 api.minimax.cn；
+    /// api.minimaxi.com 是同区域的旧别名，两者的响应结构一致。
+    static let defaultEndpoint = URL(string: "https://api.minimax.cn/v1/token_plan/remains")!
+
+    static func start(key: String, configuration: URLSessionConfiguration = .ephemeral,
+                      completion: @escaping SubscriptionQuotaCompletion) -> SubscriptionQuotaRequest {
+        SubscriptionQuotaHTTPQuery.start(endpoint: defaultEndpoint, credential: key,
+                                         headers: ["Authorization": "Bearer {credential}"],
+                                         configuration: configuration,
+                                         parse: { try SubscriptionQuotaParser.minimax($0) },
+                                         completion: completion)
     }
 }
 

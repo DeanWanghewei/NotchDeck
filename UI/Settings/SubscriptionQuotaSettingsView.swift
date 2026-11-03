@@ -18,12 +18,13 @@ struct SubscriptionQuotaSettingsView: View {
             }
             Section("账号") {
                 HStack {
-                    Text("GLM 和 Codex 均可添加多个账号，别名可留空。")
+                    Text("GLM、Codex 与 MiniMax 均可添加多个账号，别名可留空。")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Menu("添加账号") {
                         Button("GLM Coding Plan") { editor = .init(provider: .glm) }
                         Button("ChatGPT · Codex") { editor = .init(provider: .codex) }
+                        Button("MiniMax M Plan（中国区）") { editor = .init(provider: .minimaxCN) }
                     }.fixedSize()
                 }
                 if preferences.value.accounts.isEmpty {
@@ -34,8 +35,7 @@ struct SubscriptionQuotaSettingsView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(account.displayName(in: preferences.value.accounts)).fontWeight(.medium).lineLimit(1)
-                                Text(account.provider.title + (account.provider == .codex ?
-                                    (account.codexAuthStored ? " · 登录已独立保存" : " · 跟随本机登录，请粘贴 JSON 固定账号") : " · 独立密钥"))
+                                Text(subtitle(for: account))
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 4)
@@ -102,6 +102,18 @@ struct SubscriptionQuotaSettingsView: View {
         })
     }
 
+    /// 账号说明行：各服务的凭据形态不同，不能用同一句话概括。
+    private func subtitle(for account: SubscriptionAccount) -> String {
+        switch account.provider {
+        case .glm:
+            return account.provider.title + " · 独立密钥"
+        case .codex:
+            return account.provider.title + (account.codexAuthStored ? " · 登录已独立保存" : " · 跟随本机登录，请粘贴 JSON 固定账号")
+        case .minimaxCN:
+            return account.provider.title + " · 独立订阅 Key"
+        }
+    }
+
     private func applyCodexPath() {
         preferences.update { $0.codexExecutable = codexPath.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
@@ -120,6 +132,7 @@ struct SubscriptionAccountEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var account: SubscriptionAccount
     @State private var glmKey = ""
+    @State private var minimaxKey = ""
     @State private var authJSON = ""
 
     init(module: SubscriptionQuotaModule, provider: SubscriptionProvider, account: SubscriptionAccount? = nil) {
@@ -140,6 +153,12 @@ struct SubscriptionAccountEditor: View {
                     .textFieldStyle(.roundedBorder)
                 Text("密钥按账号加密保存在应用 Data 目录，不访问钥匙串。旧版账号请重新填写密钥或粘贴登录 JSON。")
                     .font(.caption).foregroundStyle(.secondary)
+            } else if provider == .minimaxCN {
+                SecureField(original == nil ? "M Plan 订阅 Key" : "新订阅 Key（留空保留已有 Key）", text: $minimaxKey)
+                    .textFieldStyle(.roundedBorder)
+                Text("订阅 Key 在 M Plan 控制台获取，需以 sk-cp- 开头；按量计费 Key（sk-api-）查询的是账户余额，查不到套餐额度。Key 按账号加密保存在应用 Data 目录。")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(original == nil ? "账号登录 JSON" : "新的账号登录 JSON（留空保留已有登录）")
                     .font(.caption).foregroundStyle(.secondary)
@@ -165,7 +184,7 @@ struct SubscriptionAccountEditor: View {
                 Button("取消") { module.cancelAccountVerification(); dismiss() }.keyboardShortcut(.cancelAction)
                 Button(provider == .codex && (original == nil || !authJSON.isEmpty) ? "验证并保存" : "保存账号") { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(module.verifying || (original == nil && (provider == .glm ? glmKey : authJSON).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    .disabled(module.verifying || (original == nil && credential.isEmpty))
             }
         }
         .padding(24).frame(width: 520, height: provider == .codex ? 460 : 350)
@@ -174,11 +193,23 @@ struct SubscriptionAccountEditor: View {
         .interactiveDismissDisabled(module.verifying)
     }
 
+    /// 新建时必须给出凭据；编辑时留空表示沿用已保存的凭据。
+    private var credential: String {
+        switch provider {
+        case .glm: return glmKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .codex: return authJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .minimaxCN: return minimaxKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
     private func save() {
         account.alias = account.alias.trimmingCharacters(in: .whitespacesAndNewlines)
-        if provider == .glm {
+        switch provider {
+        case .glm:
             if module.saveGLMAccount(account, key: glmKey) { glmKey = ""; dismiss() }
-        } else {
+        case .minimaxCN:
+            if module.saveMiniMaxAccount(account, key: minimaxKey) { minimaxKey = ""; dismiss() }
+        case .codex:
             module.saveCodexAccount(account, authJSON: authJSON) { saved in if saved { authJSON = ""; dismiss() } }
         }
     }
