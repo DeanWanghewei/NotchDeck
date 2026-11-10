@@ -67,7 +67,8 @@ struct CustomItemsView: View {
             outputText(module.output(for: item) ?? "…")
         case .heatmap:
             if let values = module.samples[item.id], !values.isEmpty {
-                CustomHeatmapView(values: values, rawText: module.output(for: item))
+                CustomHeatmapView(values: values, rawText: module.output(for: item),
+                                  pollInterval: module.pollInterval)
             } else {
                 VStack(alignment: .leading, spacing: 3) {
                     outputText(module.output(for: item) ?? "…")
@@ -98,6 +99,8 @@ struct CustomHeatmapView: View {
     let values: [CustomItemsModule.CustomHeatmapSample]
     /// 悬停提示展示的命令原始输出
     var rawText: String?
+    /// 当前后台探测间隔（秒）；提示里告诉用户样本多久更新一次，间隔可在设置中调整
+    var pollInterval: TimeInterval?
 
     private static let maxCellSize: CGFloat = 10
     private static let minCellSize: CGFloat = 3
@@ -217,6 +220,9 @@ struct CustomHeatmapView: View {
     private var helpText: String {
         var lines = ["单行时间线，绿色由浅到深表示数值由低到高，右端为最新样本；红色为失败（命令非 0 退出或超时）",
                      "样本多到一行放不下时相邻样本自动合并为一格（取该段最新状态）"]
+        if let pollInterval, pollInterval > 0 {
+            lines.append("每 \(CustomPollInterval.label(pollInterval))探测一次（设置 → 自定义 → 热力图探测间隔可调）")
+        }
         if let rawText, !rawText.isEmpty {
             lines.append("原始输出：\(rawText.prefix(400))")
         }

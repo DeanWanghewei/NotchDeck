@@ -30,7 +30,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.notchdeck.app
         PRODUCT_NAME: NotchDeck
-        MARKETING_VERSION: "0.23.0"
+        MARKETING_VERSION: "0.24.0"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_LSUIElement: true
@@ -51,6 +51,9 @@ targets:
         buildPhase: resources
       # 真实市场脚本进测试：脚本改动必须与解析测试同步，防止“脚本改了测试没跟”
       - path: marketplace/scripts/subscriptions-glm.js
+        buildPhase: resources
+      # 自定义子项文档进测试：文档与示例模板必须一一对应，防止“模板改了文档没跟”
+      - path: docs/custom-items.md
         buildPhase: resources
     settings:
       base:

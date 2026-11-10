@@ -7,13 +7,13 @@ struct CustomModuleSettingsView: View {
     var body: some View {
         Group {
             customSection
-            presetSection
+            presetSections
         }
         .sheet(isPresented: $showAddItem) { CustomItemEditView(settings: settings) }
     }
 
     private var customSection: some View {
-        Section("自定义子项") {
+        Section {
             if settings.customItems.isEmpty {
                 Text("添加 shell 命令小部件：文本显示执行结果，或热力图按数字大小着色。可从下方示例模板一键添加。")
                     .font(.caption)
@@ -31,44 +31,58 @@ struct CustomModuleSettingsView: View {
                     Text("\(Int(hours)) 小时").tag(hours)
                 }
             }
-            .help("热力图子项只保留最近该时长的探测样本（每 30 秒一次），更早的自动清除；面板中单行显示，样本过多时相邻样本自动合并")
-        }
-    }
-
-    /// 示例模板：命令写法的内置引导，点击「添加」即创建子项
-    private var presetSection: some View {
-        Section {
-            ForEach(CustomItemPresets.all) { preset in
-                HStack(alignment: .center, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(preset.name)
-                                .font(.callout)
-                            DisplayStyleBadge(display: preset.display)
-                        }
-                        Text(preset.command)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Text(preset.note)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    Spacer()
-                    Button("添加") {
-                        settings.customItems.append(preset.item)
-                    }
+            .help("热力图子项只保留最近该时长的探测样本，更早的自动清除；面板中单行显示，样本过多时相邻样本自动合并")
+            Picker("热力图探测间隔", selection: $settings.customPollInterval) {
+                ForEach(CustomPollInterval.options, id: \.self) { seconds in
+                    Text(CustomPollInterval.label(seconds)).tag(seconds)
                 }
-                .padding(.vertical, 1)
             }
+            .help("存在热力图子项时，后台按该间隔自动探测一次（面板收起时也在累积）；文本子项只在面板展开时执行，不参与轮询")
         } header: {
-            Text("示例模板")
+            Text("自定义子项")
         } footer: {
-            Text("热力图：命令输出数字（空格 / 逗号 / 换行分隔）按大小着色；退出码非 0 或超时显示为红色；每 30 秒后台探测。完整写法见仓库 docs/custom-items.md")
+            Text("命令退出码非 0 或超时记为一次失败，热力图显示为红色方格；文本子项显示原始输出与退出码。完整写法见仓库 docs/custom-items.md")
         }
     }
 
+    /// 示例模板：按分类分成若干分组，点击「添加」即创建子项
+    private var presetSections: some View {
+        ForEach(CustomItemPresets.categories, id: \.self) { category in
+            Section {
+                ForEach(CustomItemPresets.presets(in: category)) { preset in
+                    presetRow(preset)
+                }
+            } header: {
+                Text(category.rawValue)
+            }
+        }
+    }
+
+    private func presetRow(_ preset: CustomItemPresets.Preset) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(preset.name)
+                        .font(.callout)
+                    DisplayStyleBadge(display: preset.display)
+                }
+                Text(preset.command)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(preset.note)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("添加") {
+                settings.customItems.append(preset.item)
+            }
+        }
+        .padding(.vertical, 1)
+    }
 }
 
 // MARK: - 展示方式徽章
@@ -207,9 +221,9 @@ struct CustomItemEditView: View {
     private var displayHint: String {
         switch display {
         case .text:
-            return "命令的执行结果原样显示在面板中。"
+            return "命令的执行结果原样显示在面板中；文本子项只在面板展开时执行，不参与后台探测。"
         case .heatmap:
-            return "命令输出一个或多个数字（空格 / 逗号 / 换行分隔），按数值大小着色成方格图；单个数字会随刷新累积为趋势，且每 30 秒后台探测一次。命令非 0 退出或超时记为一次失败，显示为红色方格——适合探测网络地址。"
+            return "命令输出一个或多个数字（空格 / 逗号 / 换行分隔），按数值大小着色成方格图；单个数字会随刷新累积为趋势，并按设置页的探测间隔（默认 30 秒）在后台探测一次。命令非 0 退出或超时记为一次失败，显示为红色方格——适合探测网络地址。"
         }
     }
 

@@ -33,11 +33,14 @@ final class CustomItemsModule: ObservableObject, NotchModule {
     static let parseLimit = 90
     /// 单值历史的安全上限（24 小时 × 每 30 秒一采约 2880 个，正常由保留时长裁剪，这里兜底）
     static let maxSampleCount = 3000
-    /// 有热力图子项时的后台探测间隔；文本子项不轮询，仅面板展开时执行
-    static let defaultPollInterval: TimeInterval = 30
+    /// 有热力图子项时的后台探测间隔默认值；实际间隔取自设置（settings.customPollInterval）
+    static let defaultPollInterval: TimeInterval = CustomPollInterval.defaultValue
 
     private let settings: SettingsStore
-    private let pollInterval: TimeInterval
+    /// 测试注入的固定间隔；为 nil 时跟随设置里的探测间隔
+    private let injectedPollInterval: TimeInterval?
+    /// 当前生效的探测间隔（秒）
+    private(set) var pollInterval: TimeInterval
     private let queue = DispatchQueue(label: "com.notchdeck.custom", qos: .utility)
     private var cancellables: Set<AnyCancellable> = []
     private var pollTimer: Timer?
@@ -47,10 +50,12 @@ final class CustomItemsModule: ObservableObject, NotchModule {
     /// id → 生成当前历史序列的命令；命令变更后历史重新累积，避免混入旧数据
     private var sampleCommands: [String: String] = [:]
 
+    /// - Parameter pollInterval: 注入固定间隔（测试用）；不传时跟随设置里的探测间隔
     init(settings: SettingsStore = .shared,
-         pollInterval: TimeInterval = CustomItemsModule.defaultPollInterval) {
+         pollInterval: TimeInterval? = nil) {
         self.settings = settings
-        self.pollInterval = pollInterval
+        self.injectedPollInterval = pollInterval
+        self.pollInterval = pollInterval ?? CustomPollInterval.normalized(settings.customPollInterval)
     }
 
     var isAvailable: Bool { !settings.customItems.isEmpty }
@@ -75,11 +80,33 @@ final class CustomItemsModule: ObservableObject, NotchModule {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.trimSamples() }
             .store(in: &cancellables)
-        // 监控类热力图子项（如网络探测）在后台持续采样，面板关闭时趋势也能累积
+        // 探测间隔调整后立即重建定时器，不必等旧定时器自然结束
+        settings.$customPollInterval
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] value in
+                guard let self, self.active, self.injectedPollInterval == nil else { return }
+                self.pollInterval = CustomPollInterval.normalized(value)
+                self.startPolling()
+            }
+            .store(in: &cancellables)
+        if injectedPollInterval == nil {
+            pollInterval = CustomPollInterval.normalized(settings.customPollInterval)
+        }
+        startPolling()
+    }
+
+    /// 启动（或按新间隔重建）后台探测定时器
+    private func startPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+        guard active, pollInterval > 0 else { return }
+        // 监控类热力图子项（如网络探测）在后台持续采样，面板关闭时趋势也能累积；
+        // 文本子项不参与轮询，避免按间隔反复执行用户命令。
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             guard let self, self.active, !self.isRunning,
                   self.settings.customItems.contains(where: { $0.display == .heatmap }) else { return }
-            self.refresh()
+            self.run(heatmapOnly: true)
         }
         pollTimer?.tolerance = pollInterval / 6
     }
@@ -107,15 +134,24 @@ final class CustomItemsModule: ObservableObject, NotchModule {
         if !isRunning { refresh() }
     }
 
+    /// 面板展开 / 手动刷新 / 配置变更：执行全部子项（文本子项只有这时才跑）
     func refresh() {
+        run(heatmapOnly: false)
+    }
+
+    /// 执行一批命令
+    /// - Parameter heatmapOnly: 只探测热力图子项（后台轮询用），文本子项保持上次展开时的结果
+    private func run(heatmapOnly: Bool) {
         guard active, settings.config(for: id).enabled else { return }
         generation += 1
         let currentGeneration = generation
         cancellation?.cancel()
         let token = Shell.Cancellation()
         cancellation = token
-        let items = settings.customItems
-        func stillPresent(_ id: String) -> Bool { items.contains { $0.id == id } }
+        let allItems = settings.customItems
+        // 后台轮询只跑热力图子项：文本命令（尤其是网络请求）不该按探测间隔被反复执行
+        let items = heatmapOnly ? allItems.filter { $0.display == .heatmap } : allItems
+        func stillPresent(_ id: String) -> Bool { allItems.contains { $0.id == id } }
         outputs = outputs.filter { id, _ in stillPresent(id) }
         // @Published 内容不变也会重新发布；过滤后无变化就不赋值，避免向订阅方重复推送同一序列
         let keptSamples = samples.filter { id, _ in stillPresent(id) }
@@ -150,9 +186,16 @@ final class CustomItemsModule: ObservableObject, NotchModule {
             }
             DispatchQueue.main.async {
                 guard let self, self.active, self.generation == currentGeneration,
-                      self.settings.customItems == items else { return }
+                      self.settings.customItems == allItems else { return }
                 let now = Date()
-                self.outputs = results
+                if heatmapOnly {
+                    // 只覆盖本批子项的输出，保留文本子项上次展开时取到的结果
+                    var mergedOutputs = self.outputs
+                    for (id, value) in results { mergedOutputs[id] = value }
+                    self.outputs = mergedOutputs
+                } else {
+                    self.outputs = results
+                }
                 self.unparsedHeatmapIDs = Set(parsed.filter { $0.value.isEmpty }.keys)
                 var merged: [String: [CustomHeatmapSample]] = [:]
                 for (id, values) in parsed where !values.isEmpty {

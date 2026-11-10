@@ -115,8 +115,8 @@ struct NodeListView: View {
                 .lineLimit(1)
                 .help(process.displayName)
             HStack(spacing: 6) {
-                Label(String(format: "%.1f%%", process.cpuPercent), systemImage: "cpu")
-                Label(String(format: "%.0fM", process.memoryMB), systemImage: "memorychip")
+                Label(process.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "—", systemImage: "cpu")
+                Label(process.memoryMB.map { String(format: "%.0fM", $0) } ?? "—", systemImage: "memorychip")
             }
             .font(.system(size: 9))
             .monospacedDigit()
@@ -125,7 +125,7 @@ struct NodeListView: View {
         .padding(9)
         .frame(maxWidth: .infinity, minHeight: cardHeight, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
-        .help(process.commandLine)
+        .help(process.commandLine.isEmpty ? process.displayName : process.commandLine)
     }
 
     // MARK: - 行列表
@@ -167,16 +167,18 @@ struct NodeListView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            Text(String(format: "%.1f%%", process.cpuPercent))
+            // 指标缺失（ps 不可用）时显示占位「—」，不用 0.0% 冒充真实读数；
+            // 橙色警示沿用全项目统一阈值 0.85（docs/design-conventions.md §1.3），缺失值走次要灰
+            Text(process.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "—")
                 .font(.caption.monospaced())
-                .foregroundStyle(process.cpuPercent > 80 ? .orange : .secondary)
+                .foregroundStyle(process.cpuPercent.map { $0 > 85 } == true ? .orange : .secondary)
                 .frame(width: 44, alignment: .trailing)
-                .help("CPU \(String(format: "%.1f%%", process.cpuPercent))")
-            Text(String(format: "%.0f MB", process.memoryMB))
+                .help(process.cpuPercent.map { "CPU \(String(format: "%.1f%%", $0))" } ?? "CPU 不可用")
+            Text(process.memoryMB.map { String(format: "%.0f MB", $0) } ?? "—")
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
                 .frame(width: 58, alignment: .trailing)
-                .help("内存 \(String(format: "%.1f MB", process.memoryMB))")
+                .help(process.memoryMB.map { "内存 \(String(format: "%.1f MB", $0))" } ?? "内存不可用")
             Button {
                 kill(process)
             } label: {

@@ -45,6 +45,29 @@ struct ModuleConfig: Codable, Equatable {
     }
 }
 
+/// 自定义热力图子项后台探测间隔的合法档位（秒）
+/// 收敛成固定档位而不是自由数值：设置页 Picker 与存储值必须一一对应，
+/// 手工写入的非法值（0 / 负数 / 45 / 超上限 / NaN）一律回退默认，避免出现「永远不探测」的间隔。
+enum CustomPollInterval {
+    static let defaultValue: TimeInterval = 30
+    static let options: [TimeInterval] = [10, 30, 60, 300]
+
+    /// 归一化：只接受档位集合内的有限值，其余回退默认
+    static func normalized(_ value: TimeInterval) -> TimeInterval {
+        guard value.isFinite, options.contains(value) else { return defaultValue }
+        return value
+    }
+
+    /// 设置页 Picker 的选项文案
+    static func label(_ value: TimeInterval) -> String {
+        switch value {
+        case 60: return "1 分钟"
+        case 300: return "5 分钟"
+        default: return "\(Int(value)) 秒"
+        }
+    }
+}
+
 /// UserDefaults 封装的设置存储（需求 2.5 + 模块管理）
 final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
@@ -96,6 +119,18 @@ final class SettingsStore: ObservableObject {
     /// 热力图单值序列的保留时长（小时），超出后旧样本自动清除；设置页提供 1~24 小时档位
     @Published var heatmapRetentionHours: Double {
         didSet { defaults.set(heatmapRetentionHours, forKey: Keys.heatmapRetentionHours) }
+    }
+    /// 热力图子项的后台探测间隔（秒）；只允许 CustomPollInterval.options 内的档位，非法值回退默认
+    @Published var customPollInterval: TimeInterval {
+        didSet {
+            let normalized = CustomPollInterval.normalized(customPollInterval)
+            if normalized != customPollInterval {
+                // 归一化后再写盘：Picker 的选项与存储值永远一致
+                customPollInterval = normalized
+                return
+            }
+            defaults.set(normalized, forKey: Keys.customPollInterval)
+        }
     }
     /// 已启用的媒体源（bundleID）；默认为空 = 安装后不申请任何权限
     @Published var mediaSources: [String] {
@@ -171,6 +206,7 @@ final class SettingsStore: ObservableObject {
         static let pluginCatalogCache = "marketplace.catalogCache"
         static let customItems = "settings.customItems"
         static let heatmapRetentionHours = "settings.heatmapRetentionHours"
+        static let customPollInterval = "settings.customPollInterval"
         static let mediaSources = "settings.mediaSources"
         static let panelApps = "settings.panelApps"
         static let processDisplay = "settings.processDisplay"
@@ -204,6 +240,9 @@ final class SettingsStore: ObservableObject {
         customItems = Self.decode([CustomItem].self, forKey: Keys.customItems, defaults: defaults) ?? []
         // 兼容历史/异常值：夹到 0.5~24 小时
         heatmapRetentionHours = min(24, max(0.5, defaults.object(forKey: Keys.heatmapRetentionHours) as? Double ?? 2))
+        // 旧用户没有该键时保持原有行为：默认 30 秒探测
+        customPollInterval = CustomPollInterval.normalized(
+            defaults.object(forKey: Keys.customPollInterval) as? Double ?? CustomPollInterval.defaultValue)
         mediaSources = defaults.stringArray(forKey: Keys.mediaSources) ?? []
         panelApps = Self.decode([PanelApp].self, forKey: Keys.panelApps, defaults: defaults) ?? []
         processDisplay = defaults.string(forKey: Keys.processDisplay) ?? "grid"
