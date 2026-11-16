@@ -5,18 +5,24 @@ struct PluginMarketplaceView: View {
     @ObservedObject var settings: SettingsStore
     let openSettings: (String) -> Void
     @State private var selectedID: String?
+    @State private var filter: PluginInstallationState?
+    @State private var query: String
 
     init(marketplace: PluginMarketplace, settings: SettingsStore, selectedID: String? = nil,
+         initialFilter: PluginInstallationState? = nil, initialQuery: String = "",
          openSettings: @escaping (String) -> Void) {
         self.marketplace = marketplace
         self.settings = settings
         self.openSettings = openSettings
         _selectedID = State(initialValue: selectedID)
+        _filter = State(initialValue: initialFilter)
+        _query = State(initialValue: initialQuery)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             header
+            if selectedID == nil { controls }
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -32,9 +38,9 @@ struct PluginMarketplaceView: View {
                         listing
                     }
                 }
-                .padding(24).frame(maxWidth: 880, alignment: .leading).frame(maxWidth: .infinity)
+                .padding(20).frame(maxWidth: 880, alignment: .leading).frame(maxWidth: .infinity)
             }
-            .id(selectedID)
+            .id("\(selectedID ?? "")-\(filter?.rawValue ?? "")")
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { marketplace.refreshIfStale() }
@@ -69,57 +75,109 @@ struct PluginMarketplaceView: View {
         }.padding(24)
     }
 
+    private var controls: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                filterButton(nil, title: "全部", count: marketplace.listings.count)
+                ForEach(PluginInstallationState.allCases, id: \.self) { state in
+                    filterButton(state, title: state.rawValue,
+                                 count: marketplace.filteredListings(state: state, query: "").count)
+                }
+            }
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("搜索插件名称或用途", text: $query).textFieldStyle(.plain)
+                    .accessibilityLabel("搜索插件")
+                if !query.isEmpty {
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("清除搜索")
+                }
+            }.padding(9).marketplaceCard()
+            HStack {
+                Text("已安装 = 已启用 · 已停用 = 保留配置")
+                Spacer()
+                Text("\(marketplace.filteredListings(state: filter, query: query).count) 个插件")
+            }.font(.caption).foregroundStyle(.secondary)
+        }.padding(.horizontal, 24).padding(.bottom, 16)
+    }
+
+    private func filterButton(_ state: PluginInstallationState?, title: String, count: Int) -> some View {
+        Button { filter = state } label: {
+            HStack(spacing: 6) {
+                Text(title)
+                Text("\(count)").monospacedDigit().fontWeight(.semibold)
+            }
+            .font(.callout).frame(maxWidth: .infinity).padding(.vertical, 9)
+            .foregroundStyle(filter == state ? Color.accentColor : Color.primary)
+            .background(RoundedRectangle(cornerRadius: 8)
+                .fill(filter == state ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(filter == state ? Color.accentColor : Color.clear))
+        }.buttonStyle(.plain)
+            .accessibilityLabel("\(title)，\(count) 个插件")
+            .accessibilityAddTraits(filter == state ? .isSelected : [])
+    }
+
     private var listing: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("为信息岛添加更多内容，选择插件查看详情与更新方式。")
-                .font(.callout).foregroundStyle(.secondary).padding(.bottom, 8)
-            ForEach(marketplace.listings) { entry in
+        let entries = marketplace.filteredListings(state: filter, query: query)
+        return VStack(alignment: .leading, spacing: 8) {
+            ForEach(entries) { entry in
                 Button { selectedID = entry.id } label: {
-                    HStack(spacing: 14) {
-                        PluginMarketplaceIcon(symbol: entry.systemImage)
-                        VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 12) {
+                        PluginMarketplaceIcon(symbol: entry.systemImage, size: 36)
+                        VStack(alignment: .leading, spacing: 5) {
                             Text(entry.name).font(.headline).foregroundStyle(.primary)
-                            Text(entry.summary).font(.callout).foregroundStyle(.secondary)
-                                .lineLimit(2).multilineTextAlignment(.leading)
-                        }
-                        Spacer(minLength: 8)
-                        Text(status(for: entry)).font(.caption).foregroundStyle(.secondary)
-                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                            Text(entry.summary).font(.caption).foregroundStyle(.secondary)
+                                .lineLimit(1).help(entry.summary)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .trailing, spacing: 5) {
+                            PluginStateBadge(state: marketplace.installationState(entry.id))
+                            if let note = updateNote(for: entry) {
+                                Text(note).font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }.fixedSize()
+                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
                     }
-                    .padding(18).contentShape(Rectangle())
-                    .marketplaceCard()
+                    .padding(12).contentShape(Rectangle()).marketplaceCard()
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(entry.name)，\(status(for: entry))，查看详情")
+                .accessibilityLabel("\(entry.name)，\(marketplace.installationState(entry.id).rawValue)，\(updateNote(for: entry) ?? "")，查看详情")
             }
-            ForEach(marketplace.unavailableInstalledIDs, id: \.self) { id in
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(id).font(.headline)
-                        Text("已添加，当前应用未提供此插件").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("移除") { marketplace.remove(id) }
-                }.padding(18).marketplaceCard()
-            }
-            if marketplace.listings.isEmpty && marketplace.unavailableInstalledIDs.isEmpty {
+            if entries.isEmpty {
                 VStack(spacing: 10) {
-                    Image(systemName: "shippingbox").font(.largeTitle)
-                    Text("暂无插件").font(.headline)
-                    Text("点击“检查更新”重新获取目录。").foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity).padding(40)
+                    Image(systemName: "magnifyingglass").font(.title2)
+                    Text(query.isEmpty ? "此状态下暂无插件" : "没有匹配的插件").font(.headline)
+                    Text("切换状态筛选或修改搜索内容。").font(.callout).foregroundStyle(.secondary)
+                    Button("显示全部插件") { filter = nil; query = "" }
+                }.frame(maxWidth: .infinity).padding(32)
+            }
+            if filter == nil && query.isEmpty && !marketplace.unavailableInstalledIDs.isEmpty {
+                Text("需要处理").font(.headline).padding(.top, 12)
+                ForEach(marketplace.unavailableInstalledIDs, id: \.self) { id in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(id).font(.headline)
+                            Text("已安装 · 当前应用未提供此插件").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("移除") { marketplace.remove(id) }
+                    }.padding(12).marketplaceCard()
+                }
             }
         }
     }
 
-    private func status(for entry: PluginListing) -> String {
-        if marketplace.hasNativeUpdate(for: entry) { return "随主程序更新" }
-        if marketplace.isInstalled(entry.id) {
-            if case .updatable = marketplace.scriptState(for: entry.id) { return "适配可更新" }
-            return marketplace.isEnabled(entry.id) ? "已添加" : "已停用"
+    private func updateNote(for entry: PluginListing) -> String? {
+        var notes: [String] = []
+        if marketplace.hasNativeUpdate(for: entry) { notes.append("主程序有更新") }
+        if marketplace.isInstalled(entry.id),
+           case .updatable = marketplace.scriptState(for: entry.id) { notes.append("适配可更新") }
+        if !marketplace.isInstalled(entry.id), marketplace.installableListing(entry.id) == nil {
+            notes.append("需更新应用")
         }
-        return marketplace.installableListing(entry.id) == nil ? "查看版本要求" : "可添加"
+        return notes.isEmpty ? nil : notes.joined(separator: " · ")
     }
+
 }
 
 private struct PluginMarketplaceDetail: View {
@@ -137,15 +195,16 @@ private struct PluginMarketplaceDetail: View {
             HStack(alignment: .top, spacing: 14) {
                 PluginMarketplaceIcon(symbol: entry.systemImage)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(entry.name).font(.title2.bold())
+                    HStack(spacing: 12) {
+                        Text(entry.name).font(.title2.bold())
+                        PluginStateBadge(state: marketplace.installationState(entry.id))
+                    }
                     Text(entry.summary).font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Text("作者：\(entry.author)").font(.caption).foregroundStyle(.secondary)
                 }
             }
             actions
-            versionSection
-            if installed, entry.script != nil { scriptSection }
             VStack(alignment: .leading, spacing: 12) {
                 Text("功能介绍").font(.headline)
                 if nativeUpdate {
@@ -162,6 +221,8 @@ private struct PluginMarketplaceDetail: View {
                     Link("查看源码 ↗", destination: entry.sourceURL)
                 }.font(.callout).padding(.top, 4)
             }
+            versionSection
+            if installed, entry.script != nil { scriptSection }
             if installed {
                 Divider()
                 HStack(alignment: .top) {
@@ -180,17 +241,26 @@ private struct PluginMarketplaceDetail: View {
     private var actions: some View {
         HStack(spacing: 12) {
             if installed {
-                Button("打开设置") { openSettings(entry.id) }
-                    .buttonStyle(.borderedProminent).disabled(!marketplace.hasSettings(entry.id))
-                Label(marketplace.isEnabled(entry.id) ? "已添加" : "已添加 · 已停用", systemImage: "checkmark.circle")
-                    .font(.callout).foregroundStyle(.secondary)
+                if marketplace.isEnabled(entry.id) {
+                    Button(marketplace.hasSettings(entry.id) ? "打开设置" : "布局设置") { openSettings(entry.id) }
+                        .buttonStyle(.borderedProminent)
+                    Button("停用插件") { marketplace.setEnabled(entry.id, enabled: false) }
+                    Text("已启用").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Button("启用插件") { marketplace.setEnabled(entry.id, enabled: true) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(marketplace.localVersion(entry.id) == nil)
+                    Button(marketplace.hasSettings(entry.id) ? "打开设置" : "布局设置") { openSettings(entry.id) }
+                    Text("配置已保留").font(.caption).foregroundStyle(.secondary)
+                }
             } else if let local {
-                Button(nativeUpdate ? "添加本机 v\(local.version)" : "添加插件") {
+                Button(nativeUpdate ? "安装本机 v\(local.version)" : "安装插件") {
                     if marketplace.install(entry.id) { openSettings(entry.id) }
                 }.buttonStyle(.borderedProminent)
-                Text("添加后可调整组件设置与展示位置").font(.caption).foregroundStyle(.secondary)
+                Text("安装后启用，可随时停用").font(.caption).foregroundStyle(.secondary)
             } else {
-                Text("当前应用未提供可添加的版本").font(.callout).foregroundStyle(.secondary)
+                Label("需更新 NotchDeck 后安装", systemImage: "arrow.up.circle")
+                    .font(.callout).foregroundStyle(.secondary)
             }
         }
     }
@@ -200,7 +270,11 @@ private struct PluginMarketplaceDetail: View {
             Text("插件版本").font(.headline)
             HStack(spacing: 24) {
                 Text("本机：\(marketplace.localVersion(entry.id).map { "v\($0)" } ?? "未随附")")
-                Text("目录：v\(entry.version)")
+                if nativeUpdate || marketplace.localVersion(entry.id) == nil {
+                    Text("目录：v\(entry.version)")
+                } else {
+                    Text("已是最新版本").foregroundStyle(.secondary)
+                }
             }.font(.callout).monospacedDigit()
             if let requirement = marketplace.requirement(for: entry) {
                 Text("\(requirement)；当前为 \(marketplace.currentAppVersion)。")
@@ -211,8 +285,8 @@ private struct PluginMarketplaceDetail: View {
                     .buttonStyle(.borderedProminent)
             } else {
                 Text(entry.script == nil
-                     ? "本机已包含此插件版本。插件功能升级随 NotchDeck 更新。"
-                     : "本机已包含此插件版本。插件功能升级随 NotchDeck 更新；下方解析适配可单独更新。")
+                     ? "插件功能随 NotchDeck 更新。"
+                     : "插件功能随 NotchDeck 更新；GLM 解析适配可单独更新。")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }.padding(18).frame(maxWidth: .infinity, alignment: .leading).marketplaceCard()
@@ -256,11 +330,41 @@ private struct PluginMarketplaceDetail: View {
     }
 }
 
+private struct PluginStateBadge: View {
+    let state: PluginInstallationState
+
+    private var symbol: String {
+        switch state {
+        case .installed: return "checkmark.circle.fill"
+        case .disabled: return "pause.circle.fill"
+        case .notInstalled: return "arrow.down.circle"
+        }
+    }
+
+    private var tint: Color {
+        switch state {
+        case .installed: return .accentColor
+        case .disabled: return .orange
+        case .notInstalled: return .secondary
+        }
+    }
+
+    var body: some View {
+        Label(state.rawValue, systemImage: symbol)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(state == .disabled ? Color.primary : tint)
+            .padding(.horizontal, 9).padding(.vertical, 5)
+            .background(Capsule().fill(tint.opacity(0.12)))
+            .overlay(Capsule().strokeBorder(tint.opacity(0.35)))
+    }
+}
+
 private struct PluginMarketplaceIcon: View {
     let symbol: String
+    var size: CGFloat = 48
     var body: some View {
-        Image(systemName: symbol).font(.system(size: 23, weight: .medium))
-            .foregroundStyle(Color.accentColor).frame(width: 48, height: 48)
+        Image(systemName: symbol).font(.system(size: size * 0.48, weight: .medium))
+            .foregroundStyle(Color.accentColor).frame(width: size, height: size)
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.10)))
     }
 }

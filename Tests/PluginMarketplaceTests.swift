@@ -76,6 +76,58 @@ final class PluginMarketplaceTests: XCTestCase {
         XCTAssertTrue(market.remove("clock"))
     }
 
+    func testStateFiltersAndEnableDisableFollowLifecycleWithoutRemovingConfiguration() {
+        let module = MarketplaceFixture()
+        let market = makeMarket(definitions: [implementation(module)])
+        defer { market.shutdown() }
+        XCTAssertEqual(market.installationState("subscriptions"), .notInstalled)
+        XCTAssertEqual(market.filteredListings(state: .notInstalled, query: " CODEX ").map(\.id), ["subscriptions"])
+        XCTAssertFalse(market.setEnabled("subscriptions", enabled: true))
+        XCTAssertTrue(market.install("subscriptions"))
+        settings.updateConfig(for: "subscriptions") { $0.placement = .bottom }
+        XCTAssertEqual(market.installationState("subscriptions"), .installed)
+        XCTAssertTrue(market.filteredListings(state: .notInstalled, query: "").isEmpty)
+        XCTAssertTrue(market.setEnabled("subscriptions", enabled: false))
+        XCTAssertEqual(market.installationState("subscriptions"), .disabled)
+        XCTAssertTrue(market.isInstalled("subscriptions"))
+        XCTAssertEqual(market.filteredListings(state: .disabled, query: "订阅").count, 1)
+        XCTAssertTrue(market.filteredListings(state: nil, query: "不存在的插件").isEmpty)
+        XCTAssertEqual(module.events, ["start", "stop"])
+        XCTAssertTrue(market.setEnabled("subscriptions", enabled: true))
+        XCTAssertEqual(module.events, ["start", "stop", "start"])
+        XCTAssertEqual(settings.config(for: "subscriptions").placement, .bottom)
+        XCTAssertTrue(market.remove("subscriptions"))
+        XCTAssertEqual(market.installationState("subscriptions"), .notInstalled)
+        XCTAssertFalse(market.setEnabled("subscriptions", enabled: false))
+        market.shutdown()
+        XCTAssertFalse(market.setEnabled("subscriptions", enabled: true))
+    }
+
+    @MainActor
+    func testNativeAndScriptUpdatesNeverReplaceInstallationState() throws {
+        let fetcher = CatalogFixtureFetcher()
+        let store = tempScriptStore()
+        let bytes = Data("var adapter = {};".utf8)
+        try store.install(pluginID: "subscriptions", data: bytes,
+                          manifest: .init(version: "0.1.0", sha256: PluginScriptStore.sha256Hex(bytes), downloadedAt: Date()))
+        let market = makeMarket(fetch: fetcher.fetch, scriptStore: store)
+        defer { market.shutdown() }
+        var future = catalog!
+        future.plugins[0].version = "99.0.0"
+        future.plugins[0].minimumAppVersion = "99.0.0"
+        market.refresh()
+        fetcher.pending[0](.success(try JSONEncoder().encode(future)))
+        settleMainQueue()
+        XCTAssertTrue(market.hasNativeUpdate(for: market.listings[0]))
+        XCTAssertEqual(market.installationState("subscriptions"), .notInstalled)
+        XCTAssertTrue(market.install("subscriptions"))
+        guard case .updatable = market.scriptState(for: "subscriptions") else { return XCTFail("应显示独立适配更新") }
+        XCTAssertEqual(market.installationState("subscriptions"), .installed)
+        XCTAssertTrue(market.setEnabled("subscriptions", enabled: false))
+        XCTAssertEqual(market.installationState("subscriptions"), .disabled)
+        XCTAssertEqual(market.filteredListings(state: .disabled, query: "").count, 1)
+    }
+
     func testIndependentRepositoryAndLegacySourcesHaveExactTrustBoundaries() throws {
         XCTAssertEqual(PluginCatalog.downloadURL.absoluteString,
                        "https://raw.githubusercontent.com/DeanWanghewei/NotchDeck-Plugins/main/catalog.json")

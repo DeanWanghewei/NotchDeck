@@ -30,14 +30,14 @@
       "id": "media",
       "name": "媒体",
       "summary": "按需添加媒体源，查看曲目并控制播放",
-      "details": "按需添加媒体源，查看曲目并控制播放。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。媒体源由用户主动添加并按需授权。",
+      "details": "在信息岛查看当前曲目的封面、标题和播放进度，并直接控制播放。按需添加 Music 或 Spotify 媒体源。",
       "systemImage": "waveform",
       "author": "NotchDeck",
       "version": "1.0.0",
       "minimumAppVersion": "1.0.0",
       "capabilities": [
-        "支持添加、移除与重新添加",
-        "停用或移除时停止采集，保留原有配置"
+        "查看曲目信息与播放进度，控制播放",
+        "添加哪个媒体源，才请求对应的自动化授权"
       ],
       "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
       "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Media"
@@ -46,14 +46,14 @@
       "id": "volume",
       "name": "音量",
       "summary": "调节系统音量与静音",
-      "details": "调节系统音量与静音。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。",
+      "details": "无需打开系统设置，直接调节当前输出设备的音量或切换静音。",
       "systemImage": "speaker.wave.2.fill",
       "author": "NotchDeck",
       "version": "1.0.0",
       "minimumAppVersion": "1.0.0",
       "capabilities": [
-        "支持添加、移除与重新添加",
-        "停用或移除时停止采集，保留原有配置"
+        "音量滑杆与静音控制",
+        "无需权限；设备不支持调节时显示不可用状态"
       ],
       "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
       "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Volume"
@@ -62,14 +62,14 @@
       "id": "apps",
       "name": "应用",
       "summary": "管理常用应用，快速启动或退出",
-      "details": "管理常用应用，快速启动或退出。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。",
+      "details": "把常用应用放到信息岛，快速启动或退出，并查看运行状态。",
       "systemImage": "square.grid.2x2",
       "author": "NotchDeck",
       "version": "1.0.0",
       "minimumAppVersion": "1.0.0",
       "capabilities": [
-        "支持添加、移除与重新添加",
-        "停用或移除时停止采集，保留原有配置"
+        "从已安装应用中选择常用 App",
+        "一键启动或退出，显示应用运行状态"
       ],
       "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
       "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Apps"
@@ -78,14 +78,15 @@
       "id": "system",
       "name": "系统监控",
       "summary": "查看 CPU、内存、磁盘、电池与网络",
-      "details": "查看 CPU、内存、磁盘、电池与网络。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。",
+      "details": "集中查看 CPU、内存、磁盘、电池和网络。悬停指标卡查看细节，点击可固定明细。",
       "systemImage": "chart.pie",
       "author": "NotchDeck",
       "version": "1.0.0",
       "minimumAppVersion": "1.0.0",
       "capabilities": [
-        "支持添加、移除与重新添加",
-        "停用或移除时停止采集，保留原有配置"
+        "CPU 每核、内存构成与挂载卷明细",
+        "CPU 历史热力图、电池信息与网络速率",
+        "可在设置中选择显示的监控区块"
       ],
       "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
       "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/System"
@@ -94,14 +95,14 @@
       "id": "node",
       "name": "进程监控",
       "summary": "查看当前用户的监听端口与进程",
-      "details": "查看当前用户的监听端口与进程。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。",
+      "details": "查看当前用户监听 TCP 端口的进程，快速定位占用端口的应用或开发服务。",
       "systemImage": "terminal",
       "author": "NotchDeck",
       "version": "1.0.0",
       "minimumAppVersion": "1.0.0",
       "capabilities": [
-        "支持添加、移除与重新添加",
-        "停用或移除时停止采集，保留原有配置"
+        "展示进程名、PID、监听端口及可用的资源指标",
+        "支持结束进程；资源数据不可用时保留端口信息"
       ],
       "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
       "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Node"
@@ -110,14 +111,15 @@
       "id": "custom",
       "name": "自定义",
       "summary": "运行命令小部件，以文本或热力图展示",
-      "details": "运行命令小部件，以文本或热力图展示。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。",
+      "details": "把自己的命令输出变成小部件：文本用于快速读数，热力图用于观察数值变化。",
       "systemImage": "curlybraces.square",
       "author": "NotchDeck",
       "version": "1.0.0",
       "minimumAppVersion": "1.0.0",
       "capabilities": [
-        "支持添加、移除与重新添加",
-        "停用或移除时停止采集，保留原有配置"
+        "内置按场景分组的命令示例模板",
+        "文本与热力图两种展示，采样间隔可配置",
+        "命令由用户配置，失败或超时有明确提示"
       ],
       "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
       "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Custom"
@@ -126,14 +128,14 @@
       "id": "clock",
       "name": "时钟",
       "summary": "本地时间、日期与时区，无需权限",
-      "details": "本地时间、日期与时区，无需权限。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。",
+      "details": "查看本地时间、日期、中文星期和时区。适合常驻展示，也可放入独立标签页。",
       "systemImage": "clock",
       "author": "NotchDeck",
       "version": "1.0.0",
       "minimumAppVersion": "1.0.0",
       "capabilities": [
-        "支持添加、移除与重新添加",
-        "停用或移除时停止采集，保留原有配置"
+        "使用 24 小时制，支持显示或隐藏秒数",
+        "时区文字可开关，无需权限"
       ],
       "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
       "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Clock"

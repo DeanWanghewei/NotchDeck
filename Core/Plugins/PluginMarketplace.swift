@@ -14,6 +14,13 @@ struct PluginImplementation {
     var installedByDefault = false
 }
 
+/// 安装/启停是主状态；版本和适配更新只能作为独立的次级提示。
+enum PluginInstallationState: String, CaseIterable {
+    case installed = "已安装"
+    case disabled = "已停用"
+    case notInstalled = "未安装"
+}
+
 /// 已安装脚本相对目录声明的状态；版本比较复用 PluginVersion 的数值语义。
 enum PluginScriptState: Equatable {
     case none, notInstalled, installed(version: String), updatable(installed: String, available: String)
@@ -129,6 +136,31 @@ final class PluginMarketplace: ObservableObject {
     }
 
     func isInstalled(_ id: String) -> Bool { settings.installedPluginIDs.contains(id) }
+
+    func installationState(_ id: String) -> PluginInstallationState {
+        guard isInstalled(id) else { return .notInstalled }
+        return isEnabled(id) ? .installed : .disabled
+    }
+
+    func filteredListings(state: PluginInstallationState?, query: String) -> [PluginListing] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return listings.filter { entry in
+            (state == nil || installationState(entry.id) == state) &&
+            (query.isEmpty || [entry.name, entry.summary, entry.id].contains {
+                $0.localizedCaseInsensitiveContains(query)
+            })
+        }
+    }
+
+    @discardableResult
+    func setEnabled(_ id: String, enabled: Bool) -> Bool {
+        guard !stopped, isInstalled(id),
+              let definition = implementations.first(where: { $0.descriptor.id == id }),
+              registry.boxes.contains(where: { $0.id == id }) else { return false }
+        settings.updateConfig(for: id, default: definition.descriptor.defaultConfig) { $0.enabled = enabled }
+        registry.updateActivity(settings: settings)
+        return true
+    }
 
     func installedVersion(_ id: String) -> String? {
         guard isInstalled(id) else { return nil }

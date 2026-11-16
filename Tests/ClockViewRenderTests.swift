@@ -97,6 +97,9 @@ final class ClockViewRenderTests: XCTestCase {
         try render(PluginMarketplaceView(marketplace: market, settings: settings,
                                         selectedID: "subscriptions", openSettings: { _ in }),
                    name: "market-detail-update", size: NSSize(width: 640, height: 1100), directory: directory)
+        settings.updateConfig(for: "subscriptions") { $0.enabled = false }
+        try render(PluginMarketplaceView(marketplace: market, settings: settings, openSettings: { _ in }),
+                   name: "market-disabled-with-updates", size: NSSize(width: 640, height: 560), directory: directory)
         XCTAssertTrue(market.remove("subscriptions"))
         try render(PluginMarketplaceView(marketplace: market, settings: settings,
                                         selectedID: "subscriptions", openSettings: { _ in }),
@@ -120,6 +123,17 @@ final class ClockViewRenderTests: XCTestCase {
         defer { market.shutdown(); registry.stopAll() }
         try render(PluginMarketplaceView(marketplace: market, settings: settings, openSettings: { _ in }),
                    name: "standard-plugins", size: NSSize(width: 640, height: 700), directory: directory)
+        for state in PluginInstallationState.allCases {
+            try render(PluginMarketplaceView(marketplace: market, settings: settings,
+                                            initialFilter: state, openSettings: { _ in }),
+                       name: "market-filter-\(state)", size: NSSize(width: 640, height: 560), directory: directory)
+        }
+        try render(PluginMarketplaceView(marketplace: market, settings: settings,
+                                        initialQuery: "无匹配内容", openSettings: { _ in }),
+                   name: "market-search-empty", size: NSSize(width: 640, height: 560), directory: directory)
+        try render(PluginMarketplaceView(marketplace: market, settings: settings,
+                                        selectedID: "clock", openSettings: { _ in }),
+                   name: "market-clock-disabled", size: NSSize(width: 640, height: 700), directory: directory)
         try render(PluginMarketplaceView(marketplace: market, settings: settings,
                                         selectedID: "system", openSettings: { _ in }),
                    name: "standard-system-detail", size: NSSize(width: 640, height: 700), directory: directory)
