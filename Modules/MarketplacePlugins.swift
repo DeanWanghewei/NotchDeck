@@ -19,7 +19,7 @@ enum MarketplacePlugins {
     ]
 
     static let implementations: [PluginImplementation] = standardImplementations + [
-        PluginImplementation(descriptor: SubscriptionQuotaModule.descriptor, version: "1.3.0",
+        PluginImplementation(descriptor: SubscriptionQuotaModule.descriptor, version: "1.3.1",
                              makeModule: { ModuleBox(SubscriptionQuotaModule(settings: $0)) }),
     ]
 }

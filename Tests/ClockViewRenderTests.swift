@@ -64,7 +64,7 @@ final class ClockViewRenderTests: XCTestCase {
                                               version: catalog.plugins[0].version,
                                               makeModule: { _ in ModuleBox(MarketplaceRenderModule()) })
         let app = AppModel(settings: settings, modules: [], plugins: [definition], catalog: catalog,
-                           appVersion: "0.23.0", catalogFetch: { _ in
+                           appVersion: catalog.plugins[0].minimumAppVersion, catalogFetch: { _ in
             XCTFail("自渲染不应发起目录请求"); return AnyCancellable {}
         })
         defer { app.shutdown() }
