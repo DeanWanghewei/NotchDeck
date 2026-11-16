@@ -221,13 +221,33 @@ final class SubscriptionQuotaTests: XCTestCase {
                                     resetsAt: seconds == 0 ? nil : now.addingTimeInterval(seconds))
         }
         XCTAssertNil(window(seconds: -30).remainingDuration(now: now))
-        XCTAssertEqual(window(seconds: 15).remainingDuration(now: now), "1 分钟")
-        XCTAssertEqual(window(seconds: 59 * 60 + 59).remainingDuration(now: now), "59 分钟")
-        XCTAssertEqual(window(seconds: 3600).remainingDuration(now: now), "1 小时")
-        XCTAssertEqual(window(seconds: 2 * 3600 + 5 * 60).remainingDuration(now: now), "2 小时 5 分钟")
-        XCTAssertEqual(window(seconds: 2 * 86_400).remainingDuration(now: now), "2 天")
-        XCTAssertEqual(window(seconds: 2 * 86_400 + 3 * 3600 + 17 * 60).remainingDuration(now: now), "2 天 3 小时")
+        XCTAssertEqual(window(seconds: 15).remainingDuration(now: now), "0h1m")
+        XCTAssertEqual(window(seconds: 59 * 60 + 59).remainingDuration(now: now), "0h59m")
+        XCTAssertEqual(window(seconds: 3600).remainingDuration(now: now), "1h0m")
+        XCTAssertEqual(window(seconds: 2 * 3600 + 5 * 60).remainingDuration(now: now), "2h5m")
+        XCTAssertEqual(window(seconds: 2 * 86_400).remainingDuration(now: now), "48h0m")
+        XCTAssertEqual(window(seconds: 2 * 86_400 + 3 * 3600 + 17 * 60).remainingDuration(now: now), "51h17m")
         XCTAssertNil(window(seconds: 0).remainingDuration(now: now))
+    }
+
+    func testWeeklyRemainingDurationKeepsDaysHoursAndMinutes() {
+        let now = Date(timeIntervalSince1970: 1_782_086_400)
+        for title in ["每周", "视频 · 每周"] {
+            for (seconds, expected) in [(15.0, "0d0h1m"), (3600.0, "0d1h0m"),
+                                        (86400.0, "1d0h0m"), (184620.0, "2d3h17m")] {
+                let window = SubscriptionQuotaWindow(id: "weekly", title: title, usedPercent: 28,
+                                                     resetsAt: now.addingTimeInterval(seconds))
+                XCTAssertEqual(window.remainingDuration(now: now), expected)
+            }
+        }
+        let expired = SubscriptionQuotaWindow(id: "weekly", title: "每周", usedPercent: 28, resetsAt: now)
+        XCTAssertNil(expired.remainingDuration(now: now))
+        let other = SubscriptionQuotaWindow(id: "tool", title: "工具调用", usedPercent: 28,
+                                           resetsAt: now.addingTimeInterval(184620))
+        XCTAssertEqual(other.remainingDuration(now: now), "2d3h17m")
+        let primary = SubscriptionQuotaWindow(id: "primary", title: "主要周期", usedPercent: 28,
+                                             resetsAt: now.addingTimeInterval(3600))
+        XCTAssertEqual(primary.remainingDuration(now: now), "1h0m")
     }
 
     func testResetDescriptionCombinesRemainingAndAbsoluteMoment() {
@@ -237,11 +257,11 @@ final class SubscriptionQuotaTests: XCTestCase {
                                             resetsAt: now.addingTimeInterval(3300))
         // 绝对时刻统一 yyyy-MM-dd HH:mm:ss，今天与跨天不再切换口径。
         XCTAssertEqual(today.resetDescription(now: now, timeZone: utc),
-                       "还剩 55 分钟 · 2026-06-22 00:55:00 重置")
+                       "还剩 0h55m · 2026-06-22 00:55:00 重置")
         let crossDay = SubscriptionQuotaWindow(id: "w", title: "每周", usedPercent: 38,
                                                resetsAt: now.addingTimeInterval(2 * 86_400 + 3600))
         XCTAssertEqual(crossDay.resetDescription(now: now, timeZone: utc),
-                       "还剩 2 天 1 小时 · 2026-06-24 01:00:00 重置")
+                       "还剩 2d1h0m · 2026-06-24 01:00:00 重置")
         XCTAssertEqual(SubscriptionQuotaWindow(id: "w", title: "每周", usedPercent: 38,
                                                resetsAt: now.addingTimeInterval(-1))
             .resetDescription(now: now), "周期已到，等待刷新")
@@ -254,7 +274,7 @@ final class SubscriptionQuotaTests: XCTestCase {
         let utc = TimeZone(identifier: "UTC")!
         let window = SubscriptionQuotaWindow(id: "w", title: "每周", usedPercent: 38, resetsAt: now.addingTimeInterval(3300))
         XCTAssertEqual(window.resetHelpDescription(now: now, timeZone: utc),
-                       "还剩 55 分钟，重置于 2026-06-22 00:55:00")
+                       "还剩 0d0h55m，重置于 2026-06-22 00:55:00")
         let expired = SubscriptionQuotaWindow(id: "w", title: "每周", usedPercent: 38, resetsAt: now.addingTimeInterval(-1))
         XCTAssertEqual(expired.resetHelpDescription(now: now), "周期已到，等待刷新")
         let missing = SubscriptionQuotaWindow(id: "w", title: "每周", usedPercent: 38, resetsAt: nil)

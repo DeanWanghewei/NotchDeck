@@ -48,13 +48,14 @@ extension SubscriptionQuotaWindow {
         // 不足一分钟按 1 分钟显示，避免与“已到期”之间来回跳。
         let minutes = remaining > 0 ? max(1, Int(remaining / 60)) : 0
         guard minutes > 0 else { return nil }
-        if minutes < 60 { return "\(minutes) 分钟" }
-        if minutes < 1440 {
-            let (hours, rest) = (minutes / 60, minutes % 60)
-            return rest == 0 ? "\(hours) 小时" : "\(hours) 小时 \(rest) 分钟"
+        let hours = minutes / 60
+        let rest = minutes % 60
+        // 周窗口临近重置仍保留 0d，避免同一周期在天/小时格式之间切换；
+        // MiniMax 的窗口名称可能带模型前缀，不能只匹配完整的“每周”。
+        if title.hasSuffix("周") || (!title.hasSuffix("5 小时") && minutes >= 1440) {
+            return "\(minutes / 1440)d\(hours % 24)h\(rest)m"
         }
-        let (days, hours) = (minutes / 1440, minutes % 1440 / 60)
-        return hours == 0 ? "\(days) 天" : "\(days) 天 \(hours) 小时"
+        return "\(hours)h\(rest)m"
     }
 
     /// 行内重置说明：剩余时长与绝对时间点同现，便于直接对照官方用量页；
