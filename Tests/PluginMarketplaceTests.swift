@@ -13,6 +13,7 @@ final class PluginMarketplaceTests: XCTestCase {
         defaults = UserDefaults(suiteName: suite)!
         settings = SettingsStore(defaults: defaults)
         catalog = try PluginCatalog.bundled()
+        catalog.plugins = catalog.plugins.filter { $0.id == "subscriptions" }
     }
 
     override func tearDown() {
@@ -22,7 +23,8 @@ final class PluginMarketplaceTests: XCTestCase {
     }
 
     func testBundledDirectoryMatchesTrustedFactoriesWithoutConstructingPlugins() throws {
-        XCTAssertEqual(catalog.plugins.map(\.id), ["subscriptions"])
+        let catalog = try PluginCatalog.bundled()
+        XCTAssertEqual(Set(catalog.plugins.map(\.id)), Set(MarketplacePlugins.implementations.map { $0.descriptor.id }))
         let definitions = MarketplacePlugins.implementations
         XCTAssertEqual(Set(definitions.map { $0.descriptor.id }).count, definitions.count)
         for implementation in definitions {
@@ -33,6 +35,78 @@ final class PluginMarketplaceTests: XCTestCase {
         }
         XCTAssertEqual(SettingsPage.resolve("插件市场", boxes: []), .marketplace)
         XCTAssertEqual(SettingsPage.resolve("marketplace", boxes: []), .marketplace)
+    }
+
+    func testStandardMigrationPreservesDisabledLayoutAndExplicitRemovalAcrossRestarts() {
+        settings.setPluginInstalled("subscriptions", installed: true)
+        settings.updateConfig(for: "clock") { $0.enabled = false; $0.pinned = true }
+        settings.moduleOrder = ["clock", "media"]
+        let ids = MarketplacePlugins.standardImplementations.map { $0.descriptor.id }
+        settings.migrateStandardPlugins(ids: ids)
+        XCTAssertEqual(Set(settings.installedPluginIDs), Set(ids + ["subscriptions"]))
+        XCTAssertFalse(settings.config(for: "clock").enabled)
+        XCTAssertTrue(settings.config(for: "clock").pinned)
+        XCTAssertEqual(settings.moduleOrder, ["clock", "media"])
+        settings.setPluginInstalled("clock", installed: false)
+        let restored = SettingsStore(defaults: defaults)
+        restored.migrateStandardPlugins(ids: ids)
+        XCTAssertFalse(restored.installedPluginIDs.contains("clock"))
+        XCTAssertTrue(restored.installedPluginIDs.contains("subscriptions"))
+    }
+
+    func testFreshStandardPluginsRegisterWithoutStartingAndCanBeRemoved() throws {
+        let registry = ModuleRegistry()
+        let market = PluginMarketplace(settings: settings, registry: registry,
+                                       implementations: MarketplacePlugins.implementations,
+                                       bundledCatalog: try PluginCatalog.bundled(), appVersion: "1.0.0")
+        defer { market.shutdown(); registry.stopAll() }
+        XCTAssertEqual(registry.boxes.map(\.id), MarketplacePlugins.standardImplementations.map { $0.descriptor.id })
+        XCTAssertTrue(registry.boxes.allSatisfy { !$0.isActive })
+        XCTAssertFalse(market.isEnabled("clock"))
+        XCTAssertTrue(market.isEnabled("media"))
+        XCTAssertFalse(settings.config(for: "clock", default: ClockModule.descriptor.defaultConfig).enabled)
+        for id in MarketplacePlugins.standardImplementations.map({ $0.descriptor.id }) {
+            XCTAssertNotNil(market.installableListing(id))
+            XCTAssertTrue(market.remove(id))
+        }
+        XCTAssertTrue(registry.boxes.isEmpty)
+        XCTAssertTrue(market.install("clock"))
+        XCTAssertTrue(registry.boxes.first?.isActive == true)
+        XCTAssertTrue(settings.config(for: "clock").enabled)
+        XCTAssertTrue(market.remove("clock"))
+    }
+
+    func testIndependentRepositoryAndLegacySourcesHaveExactTrustBoundaries() throws {
+        XCTAssertEqual(PluginCatalog.downloadURL.absoluteString,
+                       "https://raw.githubusercontent.com/DeanWanghewei/NotchDeck-Plugins/main/catalog.json")
+        for repository in ["NotchDeck", "NotchDeck-Plugins"] {
+            var entry = catalog!
+            entry.plugins[0].documentationURL = URL(string: "https://github.com/DeanWanghewei/\(repository)/blob/main/README.md")!
+            XCTAssertNoThrow(try entry.validated())
+        }
+        XCTAssertTrue(PluginCatalog.isTrustedScriptURL(URL(string:
+            "https://raw.githubusercontent.com/DeanWanghewei/NotchDeck/main/marketplace/scripts/subscriptions-glm.js")!))
+        XCTAssertTrue(PluginCatalog.isTrustedScriptURL(URL(string:
+            "https://raw.githubusercontent.com/DeanWanghewei/NotchDeck-Plugins/main/adapters/subscriptions/1.0.0/glm.js")!))
+        for path in ["NotchDeck-Plugins-Evil/main/adapters/a.js",
+                     "NotchDeck-Plugins/main/adapters/../a.js",
+                     "NotchDeck-Plugins/main/adapters/%2e%2e/a.js",
+                     "NotchDeck-Plugins/main/adapters/a.js?redirect=evil",
+                     "NotchDeck-Plugins/main/adapters/a.js#fragment",
+                     "NotchDeck-Plugins/main/adapters//a.js",
+                     "NotchDeck-Plugins/main/catalog.json",
+                     "NotchDeck/main/arbitrary.js"] {
+            XCTAssertFalse(PluginCatalog.isTrustedScriptURL(URL(string:
+                "https://raw.githubusercontent.com/DeanWanghewei/\(path)")!), path)
+        }
+    }
+
+    func testScriptTransportRejectsUntrustedSourceBeforeNetworking() {
+        var result: Result<Data, PluginScriptError>?
+        let request = PluginScriptClient.fetch(url: URL(string: "https://example.com/adapter.js")!) { result = $0 }
+        withExtendedLifetime(request) {
+            guard case .failure(.unavailable) = result else { return XCTFail("外站脚本必须在发送前拒绝") }
+        }
     }
 
     func testVersionsCompareNumericallyAndRejectUnboundedOrNonNumericInputs() {

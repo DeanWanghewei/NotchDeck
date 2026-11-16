@@ -131,7 +131,7 @@ final class ModuleFrameworkTests: XCTestCase {
     }
 
     func testBuiltInCatalogHasNoStartupEffectsAndPreservesLegacyDefaults() {
-        let boxes = BuiltInModules.make(settings: settings)
+        let boxes = MarketplacePlugins.standardImplementations.map { $0.makeModule(settings) }
         XCTAssertEqual(boxes.map(\.id), ["media", "volume", "apps", "system", "node", "custom", "clock"])
         XCTAssertTrue(boxes.allSatisfy { !$0.isActive })
         XCTAssertEqual(boxes.filter { $0.descriptor.defaultConfig.pinned }.map(\.id), ["media", "volume"])

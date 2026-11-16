@@ -103,6 +103,32 @@ final class ClockViewRenderTests: XCTestCase {
                    name: "market-detail-readd", size: NSSize(width: 640, height: 1050), directory: directory)
     }
 
+    func testRenderStandardPluginsWhenRequested() throws {
+        guard let directory = ProcessInfo.processInfo.environment["NOTCHDECK_RENDER_DIR"] else { return }
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        let suite = "com.notchdeck.standard.render.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = SettingsStore(defaults: defaults)
+        let registry = ModuleRegistry()
+        let market = PluginMarketplace(settings: settings, registry: registry,
+                                       implementations: MarketplacePlugins.implementations,
+                                       appVersion: "1.0.0", fetch: { completion in
+            completion(.success(try! JSONEncoder().encode(PluginCatalog.bundled())))
+            return AnyCancellable {}
+        })
+        defer { market.shutdown(); registry.stopAll() }
+        try render(PluginMarketplaceView(marketplace: market, settings: settings, openSettings: { _ in }),
+                   name: "standard-plugins", size: NSSize(width: 640, height: 700), directory: directory)
+        try render(PluginMarketplaceView(marketplace: market, settings: settings,
+                                        selectedID: "system", openSettings: { _ in }),
+                   name: "standard-system-detail", size: NSSize(width: 640, height: 700), directory: directory)
+        XCTAssertTrue(market.remove("system"))
+        try render(PluginMarketplaceView(marketplace: market, settings: settings,
+                                        selectedID: "system", openSettings: { _ in }),
+                   name: "standard-system-removed", size: NSSize(width: 640, height: 700), directory: directory)
+    }
+
     private func render<V: View>(_ view: V, name: String, size: NSSize, directory: String,
                                  padding: CGFloat = 16) throws {
         for dark in [false, true] {

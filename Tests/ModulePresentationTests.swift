@@ -111,7 +111,7 @@ final class ModulePresentationTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = SettingsStore(defaults: defaults)
-        let app = AppModel(settings: settings, modules: [], plugins: MarketplacePlugins.implementations,
+        let app = AppModel(settings: settings, modules: [], plugins: MarketplacePlugins.implementations.filter { $0.descriptor.id == "subscriptions" },
                            catalog: try PluginCatalog.bundled(), appVersion: "99.0.0")
         defer { app.shutdown() }
         XCTAssertTrue(app.marketplace.install("subscriptions"))
@@ -125,7 +125,7 @@ final class ModulePresentationTests: XCTestCase {
         XCTAssertEqual(app.presentationContext(for: box), ModulePresentationContext(placement: .bottom, displayModeID: "compact"))
         app.shutdown()
         let restored = AppModel(settings: SettingsStore(defaults: defaults), modules: [],
-                                plugins: MarketplacePlugins.implementations,
+                                plugins: MarketplacePlugins.implementations.filter { $0.descriptor.id == "subscriptions" },
                                 catalog: try PluginCatalog.bundled(), appVersion: "99.0.0")
         defer { restored.shutdown() }
         XCTAssertEqual(restored.bottomModules.map(\.id), ["subscriptions"])

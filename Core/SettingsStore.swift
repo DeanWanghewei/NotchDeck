@@ -266,6 +266,17 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// 独立记录已迁移的 id：旧市场安装列表可能已存在，移除后仍须记住迁移已完成。
+    func migrateStandardPlugins(ids: [String]) {
+        let key = "plugins.migratedStandardIDs"
+        var migrated = defaults.stringArray(forKey: key) ?? []
+        for id in ids where !migrated.contains(id) {
+            setPluginInstalled(id, installed: true)
+            migrated.append(id)
+        }
+        defaults.set(migrated, forKey: key)
+    }
+
     func setPluginInstalled(_ id: String, installed: Bool) {
         if installed {
             if !installedPluginIDs.contains(id) { installedPluginIDs.append(id) }

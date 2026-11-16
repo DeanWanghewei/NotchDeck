@@ -7,8 +7,8 @@ struct PluginCatalog: Codable, Equatable {
     let schemaVersion: Int
     var plugins: [PluginListing]
 
-    static let repositoryURL = URL(string: "https://github.com/DeanWanghewei/NotchDeck/tree/main/marketplace")!
-    static let downloadURL = URL(string: "https://raw.githubusercontent.com/DeanWanghewei/NotchDeck/main/marketplace/catalog.json")!
+    static let repositoryURL = URL(string: "https://github.com/DeanWanghewei/NotchDeck-Plugins")!
+    static let downloadURL = URL(string: "https://raw.githubusercontent.com/DeanWanghewei/NotchDeck-Plugins/main/catalog.json")!
     static let releasesURL = URL(string: "https://github.com/DeanWanghewei/NotchDeck/releases")!
     static let maximumBytes = 256 * 1024
 
@@ -46,17 +46,33 @@ struct PluginCatalog: Codable, Equatable {
         return try decode(data)
     }
 
-    private static func isRepositoryLink(_ url: URL) -> Bool {
-        url.scheme == "https" && url.host == "github.com" && url.user == nil && url.password == nil &&
-        url.port == nil && url.path.hasPrefix("/DeanWanghewei/NotchDeck/")
+    /// 两个官方仓库职责分开；精确路径边界保留旧缓存，不能用相似仓库名扩大信任范围。
+    private static func trustedURL(_ url: URL, host: String, prefixes: [String]) -> Bool {
+        guard url.scheme == "https", url.host == host, url.user == nil, url.password == nil,
+              url.port == nil, url.query == nil, url.fragment == nil,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              !components.percentEncodedPath.contains("%") else { return false }
+        let parts = url.path.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
+        guard !parts.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { return false }
+        return prefixes.contains { url.path.hasPrefix($0) }
     }
 
-    /// 脚本只允许从本仓库的 raw 地址下载；sha256 限定 64 位小写 hex，与下载内容逐字节比对。
+    private static func isRepositoryLink(_ url: URL) -> Bool {
+        trustedURL(url, host: "github.com", prefixes: [
+            "/DeanWanghewei/NotchDeck/", "/DeanWanghewei/NotchDeck-Plugins/",
+        ])
+    }
+
+    /// 新脚本来自独立仓库；旧地址仅为已发布目录和本机缓存保留，不接受重定向。
+    static func isTrustedScriptURL(_ url: URL) -> Bool {
+        trustedURL(url, host: "raw.githubusercontent.com", prefixes: [
+            "/DeanWanghewei/NotchDeck-Plugins/main/adapters/",
+            "/DeanWanghewei/NotchDeck/main/marketplace/scripts/",
+        ]) && url.path.hasSuffix(".js")
+    }
+
     static func isValidScriptSource(_ script: PluginScriptSource) -> Bool {
-        guard let url = URL(string: script.url),
-              url.scheme == "https" && url.host == "raw.githubusercontent.com" &&
-              url.user == nil && url.password == nil && url.port == nil &&
-              url.path.hasPrefix("/DeanWanghewei/NotchDeck/"),
+        guard let url = URL(string: script.url), isTrustedScriptURL(url),
               script.sha256.utf8.count == 64,
               script.sha256.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
               PluginVersion(script.version) != nil else { return false }

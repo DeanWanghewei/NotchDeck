@@ -58,6 +58,7 @@ struct PluginMarketplaceView: View {
             }
             HStack {
                 Text("NotchDeck \(marketplace.currentAppVersion)")
+                Link("官方插件仓库 ↗", destination: PluginCatalog.repositoryURL)
                 Spacer()
                 if let date = marketplace.lastChecked {
                     Text("上次检查 \(TimeFormat.string(date, style: .dateTime))")
@@ -115,7 +116,7 @@ struct PluginMarketplaceView: View {
         if marketplace.hasNativeUpdate(for: entry) { return "随主程序更新" }
         if marketplace.isInstalled(entry.id) {
             if case .updatable = marketplace.scriptState(for: entry.id) { return "适配可更新" }
-            return settings.config(for: entry.id).enabled ? "已添加" : "已停用"
+            return marketplace.isEnabled(entry.id) ? "已添加" : "已停用"
         }
         return marketplace.installableListing(entry.id) == nil ? "查看版本要求" : "可添加"
     }
@@ -166,7 +167,7 @@ private struct PluginMarketplaceDetail: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("移除插件").font(.callout)
-                        Text("停止运行并保留账号、配置和解析适配，可随时重新添加。")
+                        Text("停止运行并保留配置，可随时重新添加。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -181,13 +182,13 @@ private struct PluginMarketplaceDetail: View {
             if installed {
                 Button("打开设置") { openSettings(entry.id) }
                     .buttonStyle(.borderedProminent).disabled(!marketplace.hasSettings(entry.id))
-                Label(settings.config(for: entry.id).enabled ? "已添加" : "已添加 · 已停用", systemImage: "checkmark.circle")
+                Label(marketplace.isEnabled(entry.id) ? "已添加" : "已添加 · 已停用", systemImage: "checkmark.circle")
                     .font(.callout).foregroundStyle(.secondary)
             } else if let local {
                 Button(nativeUpdate ? "添加本机 v\(local.version)" : "添加插件") {
                     if marketplace.install(entry.id) { openSettings(entry.id) }
                 }.buttonStyle(.borderedProminent)
-                Text("添加后可配置账号与展示位置").font(.caption).foregroundStyle(.secondary)
+                Text("添加后可调整组件设置与展示位置").font(.caption).foregroundStyle(.secondary)
             } else {
                 Text("当前应用未提供可添加的版本").font(.callout).foregroundStyle(.secondary)
             }
@@ -209,7 +210,9 @@ private struct PluginMarketplaceDetail: View {
                 Link("打开 NotchDeck 下载页 ↗", destination: PluginCatalog.releasesURL)
                     .buttonStyle(.borderedProminent)
             } else {
-                Text("本机已包含此插件版本。插件功能升级随 NotchDeck 更新；下方解析适配可单独更新。")
+                Text(entry.script == nil
+                     ? "本机已包含此插件版本。插件功能升级随 NotchDeck 更新。"
+                     : "本机已包含此插件版本。插件功能升级随 NotchDeck 更新；下方解析适配可单独更新。")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }.padding(18).frame(maxWidth: .infinity, alignment: .leading).marketplaceCard()

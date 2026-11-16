@@ -21,10 +21,122 @@
       "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/docs/subscription-quotas.md",
       "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Subscriptions",
       "script": {
-        "url": "https://raw.githubusercontent.com/DeanWanghewei/NotchDeck/main/marketplace/scripts/subscriptions-glm.js",
+        "url": "https://raw.githubusercontent.com/DeanWanghewei/NotchDeck-Plugins/main/adapters/subscriptions/1.0.0/glm.js",
         "sha256": "d37cd3b552b1935f4005207862eb9cadb15256c4d1952ce9df93bf101ceab26a",
         "version": "1.0.0"
       }
+    },
+    {
+      "id": "media",
+      "name": "媒体",
+      "summary": "按需添加媒体源，查看曲目并控制播放",
+      "details": "按需添加媒体源，查看曲目并控制播放。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。媒体源由用户主动添加并按需授权。",
+      "systemImage": "waveform",
+      "author": "NotchDeck",
+      "version": "1.0.0",
+      "minimumAppVersion": "1.0.0",
+      "capabilities": [
+        "支持添加、移除与重新添加",
+        "停用或移除时停止采集，保留原有配置"
+      ],
+      "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
+      "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Media"
+    },
+    {
+      "id": "volume",
+      "name": "音量",
+      "summary": "调节系统音量与静音",
+      "details": "调节系统音量与静音。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。",
+      "systemImage": "speaker.wave.2.fill",
+      "author": "NotchDeck",
+      "version": "1.0.0",
+      "minimumAppVersion": "1.0.0",
+      "capabilities": [
+        "支持添加、移除与重新添加",
+        "停用或移除时停止采集，保留原有配置"
+      ],
+      "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
+      "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Volume"
+    },
+    {
+      "id": "apps",
+      "name": "应用",
+      "summary": "管理常用应用，快速启动或退出",
+      "details": "管理常用应用，快速启动或退出。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。",
+      "systemImage": "square.grid.2x2",
+      "author": "NotchDeck",
+      "version": "1.0.0",
+      "minimumAppVersion": "1.0.0",
+      "capabilities": [
+        "支持添加、移除与重新添加",
+        "停用或移除时停止采集，保留原有配置"
+      ],
+      "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
+      "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Apps"
+    },
+    {
+      "id": "system",
+      "name": "系统监控",
+      "summary": "查看 CPU、内存、磁盘、电池与网络",
+      "details": "查看 CPU、内存、磁盘、电池与网络。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。",
+      "systemImage": "chart.pie",
+      "author": "NotchDeck",
+      "version": "1.0.0",
+      "minimumAppVersion": "1.0.0",
+      "capabilities": [
+        "支持添加、移除与重新添加",
+        "停用或移除时停止采集，保留原有配置"
+      ],
+      "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
+      "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/System"
+    },
+    {
+      "id": "node",
+      "name": "进程监控",
+      "summary": "查看当前用户的监听端口与进程",
+      "details": "查看当前用户的监听端口与进程。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。",
+      "systemImage": "terminal",
+      "author": "NotchDeck",
+      "version": "1.0.0",
+      "minimumAppVersion": "1.0.0",
+      "capabilities": [
+        "支持添加、移除与重新添加",
+        "停用或移除时停止采集，保留原有配置"
+      ],
+      "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
+      "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Node"
+    },
+    {
+      "id": "custom",
+      "name": "自定义",
+      "summary": "运行命令小部件，以文本或热力图展示",
+      "details": "运行命令小部件，以文本或热力图展示。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。",
+      "systemImage": "curlybraces.square",
+      "author": "NotchDeck",
+      "version": "1.0.0",
+      "minimumAppVersion": "1.0.0",
+      "capabilities": [
+        "支持添加、移除与重新添加",
+        "停用或移除时停止采集，保留原有配置"
+      ],
+      "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
+      "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Custom"
+    },
+    {
+      "id": "clock",
+      "name": "时钟",
+      "summary": "本地时间、日期与时区，无需权限",
+      "details": "本地时间、日期与时区，无需权限。随应用提供，首次自动添加并保留原有启用状态；可移除，重新添加时恢复配置并启用。",
+      "systemImage": "clock",
+      "author": "NotchDeck",
+      "version": "1.0.0",
+      "minimumAppVersion": "1.0.0",
+      "capabilities": [
+        "支持添加、移除与重新添加",
+        "停用或移除时停止采集，保留原有配置"
+      ],
+      "documentationURL": "https://github.com/DeanWanghewei/NotchDeck/blob/main/README.md",
+      "sourceURL": "https://github.com/DeanWanghewei/NotchDeck/tree/main/Modules/Clock"
     }
   ]
 }

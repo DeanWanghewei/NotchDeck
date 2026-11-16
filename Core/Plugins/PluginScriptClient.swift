@@ -29,6 +29,10 @@ final class PluginScriptClient: NSObject, URLSessionDataDelegate {
 
     static func fetch(url: URL, configuration: URLSessionConfiguration = .ephemeral,
                       completion: @escaping PluginScriptCompletion) -> AnyCancellable {
+        guard PluginCatalog.isTrustedScriptURL(url) else {
+            completion(.failure(.unavailable))
+            return AnyCancellable {}
+        }
         let client = PluginScriptClient()
         client.completion = completion
         configuration.timeoutIntervalForRequest = 12

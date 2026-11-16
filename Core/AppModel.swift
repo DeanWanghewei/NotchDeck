@@ -3,7 +3,7 @@ import Foundation
 
 /// 全局可观察状态与模块注册表
 final class AppModel: ObservableObject {
-    static let shared = AppModel(settings: .shared, modules: BuiltInModules.make(settings: .shared),
+    static let shared = AppModel(settings: .shared, modules: [],
                                  plugins: MarketplacePlugins.implementations)
 
     static let openSettingsRequest = Notification.Name("NotchDeckOpenSettings")

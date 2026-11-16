@@ -11,6 +11,7 @@ struct PluginImplementation {
     let descriptor: ModuleDescriptor
     let version: String
     let makeModule: (SettingsStore) -> ModuleBox
+    var installedByDefault = false
 }
 
 /// 已安装脚本相对目录声明的状态；版本比较复用 PluginVersion 的数值语义。
@@ -84,6 +85,7 @@ final class PluginMarketplace: ObservableObject {
             lastChecked = cache.fetchedAt
         }
         settings.migratePluginInstallations(legacyIDs: implementations.map { $0.descriptor.id })
+        settings.migrateStandardPlugins(ids: implementations.filter(\.installedByDefault).map { $0.descriptor.id })
         for implementation in implementations where settings.installedPluginIDs.contains(implementation.descriptor.id) {
             let box = implementation.makeModule(settings)
             if box.id == implementation.descriptor.id { registry.register(box) }
@@ -120,6 +122,11 @@ final class PluginMarketplace: ObservableObject {
     }
 
     func hasSettings(_ id: String) -> Bool { registry.boxes.first { $0.id == id }?.makeSettings != nil }
+
+    func isEnabled(_ id: String) -> Bool {
+        guard let definition = implementations.first(where: { $0.descriptor.id == id }) else { return false }
+        return isInstalled(id) && settings.config(for: id, default: definition.descriptor.defaultConfig).enabled
+    }
 
     func isInstalled(_ id: String) -> Bool { settings.installedPluginIDs.contains(id) }
 
