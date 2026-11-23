@@ -75,19 +75,24 @@ final class PanelMorphTests: XCTestCase {
 
     /// 悬浮卡片的边线贴在卡片内侧：占满最外一列像素，第二列必须还是干净的卡片底色。
     /// 形状若在 strokeBorder 之外再内缩半个线宽，边线就会跨到第二列上、最外列反而只剩半格。
+    ///
+    /// 断言相对于卡片自身的底色，不写死亮度：底色是系统的窗口背景色，macOS 27 上接近纯白，
+    /// macOS 15 的 CI 上是 0.94 左右的浅灰。写死成"大于 0.97"在 CI 上必然失败，而边线的位置两边是一样的。
     func testFloatingHairlineSitsOnTheInsideOfTheCardEdge() throws {
         let image = try render(layout: floating, progress: 1, expanded: true)
         let middle = Int(floating.frame.height) / 2
+        let card = try XCTUnwrap(image.colour(x: 3, y: middle))
         let outer = try XCTUnwrap(image.colour(x: 0, y: middle))
         let inner = try XCTUnwrap(image.colour(x: 1, y: middle))
-        let card = try XCTUnwrap(image.colour(x: 3, y: middle))
-        XCTAssertLessThan(outer.red, 0.93, "最外列应被边线着色")
-        XCTAssertGreaterThan(inner.red, 0.97, "边线不应伸到第二列")
-        XCTAssertGreaterThan(card.red, 0.98)
+        // 边线是 12% 的主色，压在最外列上至少比底色暗一截；第二列与底色无异。
+        XCTAssertLessThan(outer.red, card.red - 0.05, "最外列应被边线着色")
+        XCTAssertEqual(inner.red, card.red, accuracy: 0.01, "边线不应伸到第二列")
         // 右缘对称。
         let width = Int(floating.frame.width)
-        XCTAssertLessThan(try XCTUnwrap(image.colour(x: width - 1, y: middle)).red, 0.93)
-        XCTAssertGreaterThan(try XCTUnwrap(image.colour(x: width - 2, y: middle)).red, 0.97)
+        XCTAssertLessThan(try XCTUnwrap(image.colour(x: width - 1, y: middle)).red, card.red - 0.05,
+                          "右缘最外列应被边线着色")
+        XCTAssertEqual(try XCTUnwrap(image.colour(x: width - 2, y: middle)).red, card.red, accuracy: 0.01,
+                       "右缘边线不应伸到第二列")
     }
 
     // MARK: - 像素：展开态
@@ -486,6 +491,8 @@ final class PanelMorphTests: XCTestCase {
             .environment(\.panelOutlineOverride, from.interpolated(toward: to, at: progress))
             .frame(width: layout.frame.width, height: layout.frame.height)
             .background(background)
+            // 悬浮卡片跟随系统外观，像素断言针对的是浅色；显式指定，不随运行这台机器的外观变化。
+            .environment(\.colorScheme, .light)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 1
         return try Bitmap(image: XCTUnwrap(renderer.cgImage, "面板渲染失败"))
