@@ -45,7 +45,14 @@ jobs:
       - name: 运行测试
         run: |
           set -o pipefail
-          xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck test 2>&1 | grep -E "Test Suite|Test Case.*(passed|failed)|error:|TEST" | tail -60
+          xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck test 2>&1 | tee build/ci-test.log | grep -E "Test Suite|Test Case.*(passed|failed)|error:|TEST" | tail -60
+
+      # 上面只保留输出的最后 60 行：按字母序靠前的套件里有用例失败时，失败明细全被截掉，
+      # 一次失败的运行只剩"整套测试失败"一句。这里把失败与跳过的用例、断言信息单独列出来。
+      - name: 失败明细
+        if: failure()
+        run: |
+          grep -E "Test Case.*(failed|skipped)|error:|Executed [0-9]+ tests" build/ci-test.log | grep -v "urlSession" | sort -u | head -120
 
       - name: Release 构建
         run: |
