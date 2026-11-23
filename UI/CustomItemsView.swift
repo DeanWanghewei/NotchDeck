@@ -24,6 +24,7 @@ struct CustomItemsView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 11))
+                        .refreshTurn(module.isRunning)
                 }
                 .buttonStyle(ScalingButtonStyle())
                 .foregroundStyle(.secondary)
@@ -104,7 +105,8 @@ struct CustomHeatmapView: View {
 
     private static let maxCellSize: CGFloat = 10
     private static let minCellSize: CGFloat = 3
-    private static let cellSpacing: CGFloat = 2
+    /// 格间距。不设私有：轨道与样本"恰好铺满一行"的回归测试要用它核对行宽。
+    static let cellSpacing: CGFloat = 2
     /// 由浅到深的 5 档绿色：最低档保持可见（过浅在深浅两种面板上都近乎消失），
     /// 最高档为实色；数值全部相等时取最深档
     static let levelOpacities: [Double] = [0.22, 0.42, 0.62, 0.82, 1.0]
@@ -133,6 +135,25 @@ struct CustomHeatmapView: View {
                                      (width - CGFloat(count - 1) * cellSpacing) / CGFloat(count)))
     }
 
+    /// 样本右侧还放得下多少个同样大小的空轨道格。
+    ///
+    /// 刚添加的子项只有一个样本：孤零零一个方块看起来像功能坏了，而不是"时间线刚开始积累"。
+    /// 样本右侧铺上中性轨道格，这一行从一开始就读作一条正在填充的时间线；样本越密格子越小、
+    /// 轨道越短，采满后轨道为 0。轨道格与样本同尺寸，所以任何时候这一行都是一套整齐的网格。
+    /// 独立成纯函数以便测试"恰好填满、不溢出"。
+    static func trailingTrackCount(samples: Int, cellSize: CGFloat, width: CGFloat) -> Int {
+        guard width > 0, cellSize > 0 else { return 0 }
+        let pitch = cellSize + cellSpacing
+        // 已占宽度 = 样本格 + 样本之间的间距；轨道与最后一个样本之间还有一格间距。
+        let used = samples > 0 ? CGFloat(samples) * cellSize + CGFloat(samples) * cellSpacing : 0
+        let room = width - used
+        return room <= 0 ? 0 : max(0, Int(room / pitch))
+    }
+
+    /// 空轨道格的颜色：中性的轨道色，只占位、不表示任何数值——
+    /// 与最低一档的绿色（0.22）和失败的红都区分得开，深浅两种面板上都看得见但抢不过样本。
+    static let trackColor = Color.primary.opacity(0.07)
+
     private var displayed: [CustomItemsModule.CustomHeatmapSample] { values }
 
     private var numericValues: [Double] {
@@ -149,10 +170,17 @@ struct CustomHeatmapView: View {
             GeometryReader { proxy in
                 let slots = Self.slots(from: displayed, capacity: Self.capacity(width: proxy.size.width))
                 let size = Self.cellSize(count: slots.count, width: proxy.size.width)
+                let track = Self.trailingTrackCount(samples: slots.count, cellSize: size, width: proxy.size.width)
+                let corner = min(2, size * 0.4)
                 HStack(alignment: .top, spacing: Self.cellSpacing) {
                     ForEach(Array(slots.enumerated()), id: \.offset) { _, sample in
-                        RoundedRectangle(cornerRadius: min(2, size * 0.4), style: .continuous)
+                        RoundedRectangle(cornerRadius: corner, style: .continuous)
                             .fill(color(for: sample))
+                            .frame(width: size, height: size)
+                    }
+                    ForEach(0..<track, id: \.self) { _ in
+                        RoundedRectangle(cornerRadius: corner, style: .continuous)
+                            .fill(Self.trackColor)
                             .frame(width: size, height: size)
                     }
                 }
@@ -186,7 +214,7 @@ struct CustomHeatmapView: View {
                 }
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: values)
+        .animation(NotchMotion.layout, value: values)
     }
 
     private func color(for sample: CustomItemsModule.CustomHeatmapSample) -> Color {

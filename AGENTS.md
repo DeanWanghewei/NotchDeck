@@ -7,25 +7,26 @@ NotchDeck 是 macOS 刘海信息岛（灵动岛）应用：SwiftUI + 无边框 N
 | 文档 | 角色 |
 |---|---|
 | `README.md` | 产品文档：功能、权限模型、构建与验证命令 |
-| `docs/design-conventions.md` | **项目约束**：颜色与数据展示规范（详见下） |
+| `docs/design-conventions.md` | **项目约束**：颜色、数据展示与动效规范（详见下） |
 | `docs/custom-items.md` | 自定义命令小部件的用户文档（写法与规则） |
 | `docs/module-development.md` | 内置 Swift 组件接入：描述、生命周期、独立设置与配置、测试要求 |
 | `docs/subscription-quotas.md` | GLM Coding Plan / ChatGPT · Codex / MiniMax M Plan 订阅额度配置、凭据与接口边界 |
 | `docs/minimax-quota-api.md` | MiniMax 国内区订阅额度接口调研：端点、请求头、响应结构、业务码与来源索引 |
 | `marketplace/README.md` | 插件市场目录、GitHub 维护、随应用分发约定与适配脚本（JSC 沙箱）安全边界 |
-| `docs/macos-notes.md` | 平台实证笔记：各 macOS 版本的窗口/Space/电源陷阱与探针结论（开发参考，README 只留摘要） |
+| `docs/macos-notes.md` | 平台实证笔记：各 macOS 版本的窗口/Space/电源陷阱、SwiftUI 动效与材质行为与探针结论（开发参考，README 只留摘要） |
 | `docs/PROJECT_REVIEW.md` | 一次性项目检查与修复记录（2026-09-13，历史存档，不随开发更新） |
 
 ## 硬约束（改动前必读）
 
-1. **颜色与数据展示**：一切监控类 UI 遵循 `docs/design-conventions.md`。要点：
+1. **颜色、数据展示与动效**：一切监控类 UI 遵循 `docs/design-conventions.md`。要点：
    - 连续负载（CPU 占用等）用 `HeatScale` 冷→暖色标（低=冷蓝、高=暖红），**禁止**红绿灯式配色；
    - 百分比必须显示数字，不允许只有图形；行式明细 = 标签 + 用量条 + 右对齐数值；
    - 自定义热力图绿色 5 档透明度 `[0.22, 0.42, 0.62, 0.82, 1.0]`，失败 = 实色红，失败色不得与最高值颜色相同；
-   - 改颜色/档位必须同步回归测试与该文档。
+   - 动效曲线只引用 `Core/NotchMotion.swift` 的名字，不在视图里内联 `.spring(...)` / `.easeInOut(...)`；面板展开/收起是轮廓的形变（状态写成数、内容不动遮罩动、窗口不动），不得退回"插入/移除视图 + 淡入缩放"；
+   - 改颜色/档位/动效数值必须同步回归测试与该文档。
 2. **系统 API**：只走公开 API；GPU / 风扇 / 温度在当前 macOS 不可用是**探针实证**结论（见 `Modules/System/SystemMonitor.swift`、`BatteryAndSwap.swift` 注释），恢复前不得引入私有框架。新增数据源先探针验证（结论写注释），差分/解析做成纯函数并配测试。
 3. **最小权限**：默认安装零权限申请；媒体源按需授权；悬停检测只用鼠标坐标。
-4. **验证门槛**：`xcodegen generate && xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test` 全绿（无宿主逻辑测试，不启动主程序）。UI 改动另需深浅两版窗口自渲染截图（`NSHostingView` + `cacheDisplay` 导出 PNG）目检。
+4. **验证门槛**：`xcodegen generate && xcodebuild -project NotchDeck.xcodeproj -scheme NotchDeck -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test` 全绿（无宿主逻辑测试，不启动主程序）。UI 改动另需深浅两版窗口自渲染截图（`NSHostingView` + `cacheDisplay` 导出 PNG）目检。玻璃材质例外：`cacheDisplay` 与 `ImageRenderer` 都还原不了它，需在真实窗口人工复核（见 `docs/macos-notes.md`）。
 5. **结构与风格**：Core（框架）/ Modules（按域分子目录）/ UI（视图）/ Tests 分层；中文注释与文档；注释讲"为什么/约束"，不讲代码在做什么。
 
 ## 关键实现锚点
@@ -33,6 +34,9 @@ NotchDeck 是 macOS 刘海信息岛（灵动岛）应用：SwiftUI + 无边框 N
 - 模块框架：`Core/ModuleFramework.swift`（`NotchModule` 协议 + 注册表，start/stop 生命周期）
 - 插件布局：`Core/ModulePresentation.swift`（可用区域/样式声明、默认值与用户覆盖、视图环境上下文）
 - 面板布局：`Core/PanelLayout.swift`（520 × 580 上限、接壤轮廓、与硬件刘海对齐）
+- 运动词汇表：`Core/NotchMotion.swift`（全应用动效曲线；`unfoldHold` 与弹簧过零时刻的关系由测试钉住）
+- 面板形变：`UI/PanelOutline.swift`（`PanelOutline` 形变参数、`PanelBodyShape` / `PanelNeckShape` 可插值形状、过冲夹取与贴边吸附）；`UI/PanelSurface.swift` 的 `PanelOutlineLayer`（内容遮罩与本体同钟）；窗口控制器只在视图挂载上屏后翻转目标值
+- 面板表面：`UI/PanelSurface.swift` 的 `PanelSurfaceStyle.resolve`（玻璃开关 × 系统能力 × 辅助功能的唯一真相）
 - 系统采样：`Modules/System/SystemMonitor.swift`（后台串行队列、1s、差分基线在 `reset()` 重建）
 - 悬停明细交互：`UI/SystemMonitorView.swift`（hover 展开 + 点击固定，离开整体区域才收起）
 - 市场脚本存储：`Core/Plugins/PluginScriptStore.swift`（应用 Data 目录 `NotchDeck/Plugins/<id>/`，sha256 落盘与加载双校验）；JSC 沙箱运行时：`Modules/Subscriptions/GLMScriptAdapter.swift`（主机白名单、每查询新建 JSContext、失败回退内置解析）

@@ -339,6 +339,41 @@ final class SettingsAndLifecycleTests: XCTestCase {
         XCTAssertEqual(CustomHeatmapView.slots(from: Array(history.prefix(80)), capacity: 89).count, 80)
     }
 
+    /// 空轨道与样本同处一行：无论样本多少，"样本 + 轨道"都恰好铺满行宽——不溢出、不挤到第二行，
+    /// 留白也不够再放下一个格子；样本采满后轨道为 0，刚添加时是一个样本带一长串轨道。
+    func testHeatmapTrackFillsTheRowWithoutOverflowing() {
+        let spacing = CustomHeatmapView.cellSpacing
+        for width in [CGFloat(200), 360, 488] {
+            let capacity = CustomHeatmapView.capacity(width: width)
+            for count in [1, 2, 3, 8, 20, 40, 60, capacity, capacity * 2] {
+                // 与视图一致：超过单行容量的样本先按相邻合并，再算格子尺寸与轨道。
+                let samples = (0..<count).map { CustomItemsModule.CustomHeatmapSample.value(Double($0), Date()) }
+                let merged = CustomHeatmapView.slots(from: samples, capacity: capacity)
+                if count <= capacity { XCTAssertEqual(merged.count, count, "未超容量的样本不应被合并") }
+                let size = CustomHeatmapView.cellSize(count: merged.count, width: width)
+                let track = CustomHeatmapView.trailingTrackCount(samples: merged.count, cellSize: size, width: width)
+                let cells = CGFloat(merged.count + track)
+                // 实际行宽 = 全部格子 + 格间间距（样本与轨道之间也隔一格）。
+                let row = cells * size + (cells - 1) * spacing
+                XCTAssertLessThanOrEqual(row, width + 0.001, "\(count) 个样本 @\(width)pt：溢出到第二行")
+                XCTAssertGreaterThan(row + size + spacing, width, "\(count) 个样本 @\(width)pt：留白还够放一个格子")
+            }
+        }
+        // 刚添加子项：一个样本后面跟着一长串轨道。
+        XCTAssertGreaterThan(CustomHeatmapView.trailingTrackCount(samples: 1, cellSize: 10, width: 488), 30)
+        // 采满后轨道消失。
+        let full = CustomHeatmapView.capacity(width: 488)
+        XCTAssertEqual(CustomHeatmapView.trailingTrackCount(samples: full,
+                                                           cellSize: CustomHeatmapView.cellSize(count: full, width: 488),
+                                                           width: 488), 0)
+        // 没有样本时整行都是轨道——一条空的时间线。
+        XCTAssertEqual(CustomHeatmapView.trailingTrackCount(samples: 0, cellSize: 10, width: 488),
+                       Int(488 / (10 + CustomHeatmapView.cellSpacing)))
+        // 非法输入不产生轨道。
+        XCTAssertEqual(CustomHeatmapView.trailingTrackCount(samples: 3, cellSize: 0, width: 488), 0)
+        XCTAssertEqual(CustomHeatmapView.trailingTrackCount(samples: 3, cellSize: 10, width: 0), 0)
+    }
+
     func testHeatmapSamplesOlderThanRetentionWindowAreTrimmed() {
         let now = Date()
         let history = [

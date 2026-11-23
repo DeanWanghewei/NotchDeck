@@ -16,9 +16,12 @@ struct SubscriptionQuotaView: View {
             HStack {
                 Label("订阅额度", systemImage: "chart.bar.xaxis").font(.headline)
                 Spacer()
-                Button { module.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.plain).help("刷新所有账号的订阅额度")
-                    .disabled(!module.refreshing.isEmpty)
+                Button { module.refresh() } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .refreshTurn(!module.refreshing.isEmpty)
+                }
+                .buttonStyle(.plain).help("刷新所有账号的订阅额度")
+                .disabled(!module.refreshing.isEmpty)
                 Button { openSettings() } label: { Image(systemName: "gearshape") }
                     .buttonStyle(.plain).help("管理订阅账号")
             }
@@ -52,8 +55,8 @@ struct SubscriptionQuotaView: View {
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .opacity(reduceMotion || appeared ? 1 : 0)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: appeared)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: module.displayedAccounts.map(\.id))
+        .animation(NotchMotion.unlessReducedMotion(NotchMotion.appear, reduceMotion), value: appeared)
+        .animation(NotchMotion.unlessReducedMotion(NotchMotion.crossfade, reduceMotion), value: module.displayedAccounts.map(\.id))
         .onAppear { appeared = true }
     }
 
@@ -70,6 +73,7 @@ struct SubscriptionQuotaView: View {
     private func accountCard(_ account: SubscriptionAccount, tile: Bool = false) -> some View {
         let snapshot = module.snapshots[account.id]
         let error = module.errors[account.id]
+        let index = module.displayedAccounts.firstIndex { $0.id == account.id } ?? 0
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
                 Text(account.displayName(in: module.displayedAccounts))
@@ -123,6 +127,10 @@ struct SubscriptionQuotaView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(compact ? 6 : 8)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(compact ? 0.025 : 0.05)))
+        // 账号卡片依次入场：一张跟着一张铺开，而不是整列同时出现。
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared || reduceMotion ? 0 : -NotchMotion.listRise)
+        .animation(reduceMotion ? NotchMotion.still : NotchMotion.stagger(index), value: appeared)
     }
 
     // 固定语义顺序，避免接口调换数组顺序后同一额度跳到另一层。
@@ -159,13 +167,14 @@ struct SubscriptionQuotaView: View {
                                         .rotationEffect(.degrees(-90))
                                 }
                             }.frame(width: diameter, height: diameter)
-                                .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: window.fraction)
+                                .animation(NotchMotion.unlessReducedMotion(NotchMotion.reading, reduceMotion), value: window.fraction)
                         }
                     }
                     .frame(width: 96, height: 96)
                     .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(Array(group.enumerated()), id: \.element.id) { index, window in
+                            let reading = Self.reading(window)
                             HStack(alignment: .top, spacing: 6) {
                                 Text(group.count == 1 ? "环" : index == 0 ? "外" : index == group.count - 1 ? "内" : "中")
                                     .font(.system(size: 9, weight: .medium))
@@ -176,7 +185,7 @@ struct SubscriptionQuotaView: View {
                                     HStack {
                                         Text(window.title).font(.system(size: 10)).fixedSize(horizontal: false, vertical: true)
                                         Spacer(minLength: 4)
-                                        Text("\(window.usedPercent, specifier: "%.0f")% · 余 \(window.remainingPercent, specifier: "%.0f")%")
+                                        ReadingText(text: reading)
                                             .font(.system(size: 10).monospacedDigit())
                                             .foregroundStyle(window.fraction >= 0.7 ? HeatScale.color(window.fraction) : .secondary)
                                             .fixedSize()
@@ -195,7 +204,8 @@ struct SubscriptionQuotaView: View {
     }
 
     private func quotaRow(_ window: SubscriptionQuotaWindow) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        let reading = Self.reading(window)
+        return VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 Text(window.title).font(.system(size: 10)).lineLimit(1)
                     .frame(width: 68, alignment: .leading)
@@ -206,8 +216,8 @@ struct SubscriptionQuotaView: View {
                             .frame(width: proxy.size.width * window.fraction)
                     }
                 }.frame(height: 5)
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: window.fraction)
-                Text("\(window.usedPercent, specifier: "%.0f")% · 余 \(window.remainingPercent, specifier: "%.0f")%")
+                    .animation(NotchMotion.unlessReducedMotion(NotchMotion.reading, reduceMotion), value: window.fraction)
+                ReadingText(text: reading)
                     .font(.system(size: 10).monospacedDigit())
                     .foregroundStyle(window.fraction >= 0.7 ? HeatScale.color(window.fraction) : .secondary)
                     .frame(width: 104, alignment: .trailing)
@@ -217,10 +227,19 @@ struct SubscriptionQuotaView: View {
         .accessibilityLabel("\(window.title)，已用 \(window.usedPercent.formatted())%，剩余 \(window.remainingPercent.formatted())%，\(window.resetDescription())")
     }
 
+    /// "32% · 余 68%"：长条与同心圆明细共用的读数文案。
+    /// 先算成字符串再交给 `ReadingText`——把插值直接写进参数里，类型检查器会在
+    /// "字符串插值 + 修饰符链"上超时。普通 String 插值不支持 `specifier:`，所以用 String(format:)。
+    private static func reading(_ window: SubscriptionQuotaWindow) -> String {
+        String(format: "%.0f%% · 余 %.0f%%", window.usedPercent, window.remainingPercent)
+    }
+
     private func ring(_ window: SubscriptionQuotaWindow) -> some View {
+        let used = String(format: "%.0f%%", window.usedPercent)
+        let remaining = String(format: "余 %.0f%%", window.remainingPercent)
         // 重置行放在圆环下方（与长条/同心圆一致）：绝对时刻带完整年月日时分秒，
         // 塞进圆环右侧的窄列会被截成"…"，换行又会在横向滚动容器里定不出高度。
-        VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 ZStack {
                     Circle().stroke(Color.primary.opacity(0.08), lineWidth: 4)
@@ -229,14 +248,14 @@ struct SubscriptionQuotaView: View {
                             .stroke(HeatScale.color(window.fraction), style: StrokeStyle(lineWidth: 4, lineCap: .round))
                             .rotationEffect(.degrees(-90))
                     }
-                    Text("\(window.usedPercent, specifier: "%.0f")%")
+                    ReadingText(text: used)
                         .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
                         .minimumScaleFactor(0.6).lineLimit(1).padding(3)
                 }.frame(width: 40, height: 40).padding(2)
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: window.fraction)
+                    .animation(NotchMotion.unlessReducedMotion(NotchMotion.reading, reduceMotion), value: window.fraction)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(window.title).font(.system(size: 10)).lineLimit(1)
-                    Text("余 \(window.remainingPercent, specifier: "%.0f")%")
+                    ReadingText(text: remaining)
                         .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
@@ -256,7 +275,7 @@ struct SubscriptionQuotaView: View {
     /// 剩余时长随时间流逝本地刷新（分钟粒度），不触发新的额度查询。
     private func resetText(_ window: SubscriptionQuotaWindow) -> some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
-            Text(window.resetDescription(now: context.date))
+            ReadingText(text: window.resetDescription(now: context.date))
         }
     }
 }

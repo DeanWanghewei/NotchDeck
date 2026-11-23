@@ -58,7 +58,7 @@ final class PluginMarketplaceTests: XCTestCase {
         let registry = ModuleRegistry()
         let market = PluginMarketplace(settings: settings, registry: registry,
                                        implementations: MarketplacePlugins.implementations,
-                                       bundledCatalog: try PluginCatalog.bundled(), appVersion: "1.0.0")
+                                       bundledCatalog: try PluginCatalog.bundled(), appVersion: "99.0.0")
         defer { market.shutdown(); registry.stopAll() }
         XCTAssertEqual(registry.boxes.map(\.id), MarketplacePlugins.standardImplementations.map { $0.descriptor.id })
         XCTAssertTrue(registry.boxes.allSatisfy { !$0.isActive })

@@ -12,14 +12,14 @@ enum MarketplacePlugins {
                              makeModule: { ModuleBox(SystemMonitor(settings: $0)) }, installedByDefault: true),
         PluginImplementation(descriptor: NodeProcessScanner.descriptor, version: "1.0.0",
                              makeModule: { ModuleBox(NodeProcessScanner(settings: $0)) }, installedByDefault: true),
-        PluginImplementation(descriptor: CustomItemsModule.descriptor, version: "1.0.0",
+        PluginImplementation(descriptor: CustomItemsModule.descriptor, version: "1.0.1",
                              makeModule: { ModuleBox(CustomItemsModule(settings: $0)) }, installedByDefault: true),
         PluginImplementation(descriptor: ClockModule.descriptor, version: "1.0.0",
                              makeModule: { ModuleBox(ClockModule(settings: $0)) }, installedByDefault: true),
     ]
 
     static let implementations: [PluginImplementation] = standardImplementations + [
-        PluginImplementation(descriptor: SubscriptionQuotaModule.descriptor, version: "1.3.1",
+        PluginImplementation(descriptor: SubscriptionQuotaModule.descriptor, version: "1.3.2",
                              makeModule: { ModuleBox(SubscriptionQuotaModule(settings: $0)) }),
     ]
 }

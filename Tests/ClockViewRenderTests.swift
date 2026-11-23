@@ -116,7 +116,7 @@ final class ClockViewRenderTests: XCTestCase {
         let registry = ModuleRegistry()
         let market = PluginMarketplace(settings: settings, registry: registry,
                                        implementations: MarketplacePlugins.implementations,
-                                       appVersion: "1.0.0", fetch: { completion in
+                                       appVersion: "99.0.0", fetch: { completion in
             completion(.success(try! JSONEncoder().encode(PluginCatalog.bundled())))
             return AnyCancellable {}
         })
