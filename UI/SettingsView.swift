@@ -158,6 +158,17 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            Toggle(isOn: $settings.liquidGlass) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("液态玻璃面板")
+                    Text(PanelSurfaceStyle.glassAvailable
+                         ? "卡片使用系统的 Liquid Glass 材质，接壤样式为深色玻璃。系统开启「减少透明度」或「增强对比度」时自动改用不透明背景"
+                         : "需要 macOS 26 或更高版本；当前系统使用毛玻璃背景")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(!PanelSurfaceStyle.glassAvailable)
         }
 
         Section("触发") {

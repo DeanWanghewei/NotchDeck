@@ -1,22 +1,23 @@
 import SwiftUI
 
-/// 主面板：固定尺寸悬浮岛屿，内容填满窗口（展开/收起动画由 SwiftUI 过渡完成）
+/// 主面板：固定尺寸窗口，内容按展开后的几何一次排好、全程不移动；
+/// 展开/收起是轮廓自己的形变（`PanelOutline`），内容只被这团轮廓遮住或露出。
 struct NotchDeckView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var presentation: PanelPresentation
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack(alignment: .top) {
-            if app.isExpanded, let layout = presentation.layout {
+            // 收起动画结束后才卸载。挂载/卸载本身不参与动画：能缓动的只有形状参数，
+            // 带过渡的插入/移除会让面板整块淡入，盖过形变。
+            if presentation.isPresented, let layout = presentation.layout {
                 PanelRoot(layout: layout)
-                    .transition(reduceMotion ? .opacity : .panelExpand)
+                    .transition(.identity)
+                    .onAppear { presentation.didMount?() }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .ignoresSafeArea()
-        .animation(reduceMotion ? .easeOut(duration: 0.12) :
-            .spring(response: 0.42, dampingFraction: 0.85), value: app.isExpanded)
     }
 }
 
@@ -26,46 +27,29 @@ private struct PanelRoot: View {
     @EnvironmentObject private var app: AppModel
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.panelOutlineOverride) private var outlineOverride
     let layout: PanelLayout
 
+    /// 展开是 Bool，轮廓却必须是能被缓动的数：这里按目标状态给出两份轮廓中的一份，
+    /// `PanelBodyShape` 的 animatableData 让弹簧在两份轮廓的每个长度之间插值。
+    private var outline: PanelOutline {
+        outlineOverride ?? (app.isExpanded ? .expanded(for: layout) : .folded(for: layout))
+    }
+
+    private var surface: PanelSurfaceStyle {
+        PanelSurfaceStyle.resolve(glassEnabled: app.settings.liquidGlass,
+                                  glassAvailable: PanelSurfaceStyle.glassAvailable,
+                                  reduceTransparency: reduceTransparency,
+                                  increasedContrast: contrast == .increased)
+    }
+
     var body: some View {
-        Group {
-            if layout.isAttached {
-                // 黑色凸形打底，圆角卡片与凹角补件共享窗口的颈部坐标。
-                let cardTop = layout.cardTop
-                let neckWidth = layout.neckWidth
-                let fillet = min(PanelMetrics.fillet, max(1, cardTop / 2))
-                let neckL = layout.neckCenterX - neckWidth / 2
-                let neckR = layout.neckCenterX + neckWidth / 2
-                ZStack(alignment: .top) {
-                    TuanShape(neckWidth: neckWidth,
-                              neckCenterX: layout.neckCenterX,
-                              cardTop: cardTop,
-                              cornerRadius: PanelMetrics.cornerRadius,
-                              fillet: fillet)
-                        .fill(Color.black)
-                    card
-                        .clipShape(RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous))
-                        .padding(.top, cardTop)
-                    ConcaveFilletPiece(radius: fillet)
-                        .fill(Color.black)
-                        .frame(width: fillet, height: fillet)
-                        .position(x: neckL - fillet + fillet / 2, y: cardTop - fillet + fillet / 2)
-                    ConcaveFilletPiece(radius: fillet)
-                        .fill(Color.black)
-                        .scaleEffect(x: -1)
-                        .frame(width: fillet, height: fillet)
-                        .position(x: neckR + fillet - fillet / 2, y: cardTop - fillet + fillet / 2)
-                }
-            } else {
-                card
-                    .clipShape(RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(contrast == .increased ? 0.6 : 0.12), lineWidth: 1)
-                    )
-            }
+        PanelOutlineLayer(outline: outline, layout: layout,
+                          showsContent: app.isExpanded, surface: surface,
+                          reduceMotion: reduceMotion) {
+            card
         }
         // 接壤卡片保持深色，与硬件刘海融合；悬浮卡片跟随系统浅色/深色。
         .environment(\.colorScheme, layout.isAttached ? .dark : colorScheme)
@@ -119,9 +103,7 @@ private struct PanelRoot: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(PanelSurface(attached: layout.isAttached))
-        .animation(reduceMotion ? .easeOut(duration: 0.12) :
-            .spring(response: 0.35, dampingFraction: 0.85), value: app.activeTabID)
+        .animation(reduceMotion ? NotchMotion.still : NotchMotion.layout, value: app.activeTabID)
     }
 
     private func sectionHeader(_ box: ModuleBox) -> some View {

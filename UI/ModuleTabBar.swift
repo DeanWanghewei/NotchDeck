@@ -20,7 +20,7 @@ struct ModuleTabBar: View {
     private func tabButton(_ box: ModuleBox) -> some View {
         let isSelected = box.id == (selection ?? boxes.first?.id)
         return Button {
-            withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8)) {
+            withAnimation(NotchMotion.unlessReducedMotion(NotchMotion.layout, reduceMotion)) {
                 selection = box.id
             }
         } label: {
@@ -38,6 +38,6 @@ struct ModuleTabBar: View {
         .accessibilityLabel(box.title)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         .help(box.title)
-        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: selection)
+        .animation(NotchMotion.unlessReducedMotion(NotchMotion.layout, reduceMotion), value: selection)
     }
 }

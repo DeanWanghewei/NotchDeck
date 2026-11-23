@@ -30,50 +30,6 @@ struct VisualEffectBackground: NSViewRepresentable {
     }
 }
 
-/// 新系统使用公开的 Liquid Glass API；旧系统保留毛玻璃，辅助功能优先使用不透明背景。
-struct PanelSurface: View {
-    var attached: Bool
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorSchemeContrast) private var contrast
-
-    @ViewBuilder
-    var body: some View {
-        if reduceTransparency || contrast == .increased {
-            if attached {
-                Color.black
-            } else {
-                Color(nsColor: .windowBackgroundColor)
-            }
-        } else if attached {
-            // 颈部与卡片同为黑色底，避免系统浅色玻璃在刘海下形成亮色接缝。
-            Color.black
-                .overlay(VisualEffectBackground().opacity(0.55))
-        } else {
-            floatingSurface
-        }
-    }
-
-    @ViewBuilder
-    private var floatingSurface: some View {
-        // Swift 6.2 / Xcode 26 起提供玻璃 API；仍允许用旧 SDK 构建毛玻璃版本。
-        #if compiler(>=6.2)
-        if #available(macOS 26.0, *) {
-            Color.clear.glassEffect(.regular, in:
-                RoundedRectangle(cornerRadius: PanelMetrics.cornerRadius, style: .continuous))
-        } else {
-            legacySurface
-        }
-        #else
-        legacySurface
-        #endif
-    }
-
-    private var legacySurface: some View {
-        VisualEffectBackground()
-            .overlay(Color(nsColor: .windowBackgroundColor).opacity(0.4))
-    }
-}
-
 /// 仅底部圆角的矩形：顶部与刘海融合，底部圆角收尾
 struct BottomRoundedRectangle: Shape {
     var cornerRadius: CGFloat
@@ -204,19 +160,48 @@ struct ScalingButtonStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed && !reduceMotion ? pressedScale : 1)
             .opacity(configuration.isPressed ? 0.75 : 1)
-            .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.55), value: configuration.isPressed)
+            .animation(NotchMotion.unlessReducedMotion(NotchMotion.press, reduceMotion), value: configuration.isPressed)
     }
 }
 
-/// 面板展开/收起的弹性过渡
-extension AnyTransition {
-    static let panelExpand: AnyTransition = .asymmetric(
-        insertion: .opacity
-            .combined(with: .scale(scale: 0.96, anchor: .top))
-            .combined(with: .offset(y: -6)),
-        removal: .opacity
-            .combined(with: .scale(scale: 0.97, anchor: .top)))
+/// 读数文本：数字变化时逐位滚动，而不是整串跳变——滚动读起来是"一次测量"，跳变读起来像故障。
+/// 数字始终是实际读数，只是过渡方式变了；减弱动态效果时直接替换。
+struct ReadingText: View {
+    let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    var body: some View {
+        Text(text)
+            .monospacedDigit()
+            .contentTransition(.numericText())
+            .animation(NotchMotion.unlessReducedMotion(NotchMotion.reading, reduceMotion), value: text)
+    }
+}
+
+extension View {
+    /// 取数开始时让这个视图恰好转一圈（见 `NotchMotion.refresh`）；减弱动态效果时不动。
+    /// 用在"重新取数"按钮的图标上：转的是被点的那件东西，而不是另放一个转圈的和它并排。
+    func refreshTurn(_ isRunning: Bool) -> some View {
+        modifier(RefreshTurnModifier(isRunning: isRunning))
+    }
+}
+
+private struct RefreshTurnModifier: ViewModifier {
+    let isRunning: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var turns = 0
+
+    func body(content: Content) -> some View {
+        content
+            .rotationEffect(.degrees(Double(turns) * 360))
+            .animation(NotchMotion.unlessReducedMotion(NotchMotion.refresh, reduceMotion), value: turns)
+            .onChange(of: isRunning) { running in
+                if running { turns += 1 }
+            }
+    }
+}
+
+extension AnyTransition {
     /// 标签页内容切换：新页自右侧滑入，旧页淡出左移
     static let tabSwitch: AnyTransition = .asymmetric(
         insertion: .opacity.combined(with: .offset(x: 16)),

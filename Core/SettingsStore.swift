@@ -160,6 +160,12 @@ final class SettingsStore: ObservableObject {
     @Published var notchAttached: Bool {
         didSet { defaults.set(notchAttached, forKey: Keys.notchAttached) }
     }
+    /// 卡片使用系统的 Liquid Glass 材质（macOS 26+，旧系统置灰并保留毛玻璃）。
+    /// 默认开启：悬浮面板自 macOS 26 起一直使用系统玻璃，接壤面板随之获得深色玻璃。
+    /// 系统开启「减少透明度」或「增强对比度」时无论此项如何都使用不透明背景。
+    @Published var liquidGlass: Bool {
+        didSet { defaults.set(liquidGlass, forKey: Keys.liquidGlass) }
+    }
     /// 系统监控：CPU 近 15 分钟热力图
     @Published var showCPUHeatmap: Bool {
         didSet { defaults.set(showCPUHeatmap, forKey: Keys.showCPUHeatmap) }
@@ -218,6 +224,7 @@ final class SettingsStore: ObservableObject {
         static let showThermalPressure = "settings.showThermalPressure"
         static let experimentalNowPlaying = "settings.experimentalNowPlaying"
         static let notchAttached = "settings.notchAttached"
+        static let liquidGlass = "settings.liquidGlass"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -254,6 +261,7 @@ final class SettingsStore: ObservableObject {
         showThermalPressure = defaults.object(forKey: Keys.showThermalPressure) as? Bool ?? true
         experimentalNowPlaying = defaults.object(forKey: Keys.experimentalNowPlaying) as? Bool ?? false
         notchAttached = defaults.object(forKey: Keys.notchAttached) as? Bool ?? false
+        liquidGlass = defaults.object(forKey: Keys.liquidGlass) as? Bool ?? true
     }
 
     // MARK: - 模块配置

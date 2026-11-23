@@ -17,7 +17,7 @@ struct AppLauncherView: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: settings.panelApps)
+        .animation(NotchMotion.layout, value: settings.panelApps)
     }
 
     private func row(_ app: PanelApp) -> some View {

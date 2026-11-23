@@ -107,9 +107,9 @@ struct SystemMonitorView: View {
                 .monospacedDigit()
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: settings.showCPUHeatmap)
-        .animation(.easeInOut(duration: 0.25), value: monitor.stats.thermalState)
-        .animation(.easeInOut(duration: 0.2), value: activeDetail)
+        .animation(NotchMotion.layout, value: settings.showCPUHeatmap)
+        .animation(NotchMotion.crossfade, value: monitor.stats.thermalState)
+        .animation(NotchMotion.crossfade, value: activeDetail)
     }
 
     /// 卡片行 + 悬停展开的明细区。外层 onHover 统一收尾：鼠标离开整块区域才收起，

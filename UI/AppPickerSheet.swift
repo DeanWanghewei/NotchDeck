@@ -119,6 +119,6 @@ struct AppPickerSheet: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(added ? Color.primary.opacity(0.03) : Color.clear)
         )
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: settings.panelApps)
+        .animation(NotchMotion.layout, value: settings.panelApps)
     }
 }

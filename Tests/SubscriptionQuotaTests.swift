@@ -1069,7 +1069,8 @@ final class SubscriptionQuotaTests: XCTestCase {
     }
 }
 
-private final class QuotaTestSecrets: SubscriptionSecretStore {
+// 订阅额度的测试替身（不局限于本文件）：实机截图 `PanelLiveCaptureTests` 也用它们给面板喂样例账号。
+final class QuotaTestSecrets: SubscriptionSecretStore {
     var keys: [String: String] = [:]
     var minimaxKeys: [String: String] = [:]
     var auth: [String: Data] = [:]
@@ -1089,7 +1090,7 @@ private final class QuotaTestSecrets: SubscriptionSecretStore {
     func removeMiniMaxKey(accountID: String) throws { minimaxKeys.removeValue(forKey: accountID) }
 }
 
-private final class QuotaTestClient {
+final class QuotaTestClient {
     struct GLM { let key: String; let adapter: GLMAdapterConfiguration?; let request: SubscriptionQuotaRequest; let completion: SubscriptionQuotaCompletion }
     struct Codex { let input: CodexQuotaInput; let request: SubscriptionQuotaRequest; let completion: CodexQuotaCompletion }
     struct MiniMax { let key: String; let request: SubscriptionQuotaRequest; let completion: SubscriptionQuotaCompletion }
@@ -1128,7 +1129,7 @@ private final class QuotaURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
-private extension SubscriptionQuotaSnapshot {
+extension SubscriptionQuotaSnapshot {
     static func fixture(for provider: SubscriptionProvider, now: Date = Date()) -> Self {
         let plan: String
         switch provider {
@@ -1145,7 +1146,7 @@ private extension SubscriptionQuotaSnapshot {
     }
 }
 
-private final class QuotaTestNotifications: AppNotificationSending {
+final class QuotaTestNotifications: AppNotificationSending {
     var messages: [AppNotification] = []
     var delivered = true
     func send(_ notification: AppNotification, completion: @escaping (Bool) -> Void) {

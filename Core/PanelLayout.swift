@@ -69,7 +69,6 @@ enum PanelMetrics {
     static let gapBelowMenuBar: CGFloat = 6
     static let cornerRadius: CGFloat = 26
     static let fillet: CGFloat = 14
-    static let animationDuration: TimeInterval = 0.45
     static let hotZoneWidth: CGFloat = 240
     /// 保留原有视觉宽度，但不超过系统报告的硬件刘海宽度。
     static let neckWidth: CGFloat = 180
@@ -86,6 +85,9 @@ struct PanelLayout: Equatable {
     let neckWidth: CGFloat
     /// 相对窗口左缘的刘海中心；侧边 Dock 挤压窗口时仍与硬件对齐。
     let neckCenterX: CGFloat
+    /// 硬件刘海底缘在窗口坐标里的 y，也就是接壤模式下颈部可以藏进去的深度；
+    /// 悬浮卡片没有颈部，为 0。
+    let notchDepth: CGFloat
 
     init(screen: PanelScreenGeometry, attached: Bool) {
         let visible = screen.visibleFrame
@@ -103,10 +105,18 @@ struct PanelLayout: Equatable {
         let requestedNeckHeight = isAttached ? screen.menuBarHeight + PanelMetrics.gapBelowMenuBar : 0
         let height = min(PanelMetrics.height + requestedNeckHeight, max(1, top - visible.minY))
         cardTop = min(requestedNeckHeight, max(0, height - 1))
+        notchDepth = isAttached ? min(screen.safeAreaTop, cardTop) : 0
         frame = CGRect(x: x, y: top - height, width: width, height: height)
     }
 }
 
 final class PanelPresentation: ObservableObject {
     @Published var layout: PanelLayout?
+    /// 面板视图是否挂载。展开前先置 true，让视图按折叠轮廓挂载；收起动画结束后才置回 false，
+    /// 窗口同时移出屏幕。与 `AppModel.isExpanded` 分开：后者在收起一开始就变 false，
+    /// 而视图必须留到轮廓缩完。
+    @Published var isPresented = false
+    /// 视图完成首次挂载时回调。由窗口控制器设置，用来在折叠轮廓上屏之后再开始形变；
+    /// 未设置时什么都不做，测试可以直接驱动 `AppModel.isExpanded`。
+    var didMount: (() -> Void)?
 }

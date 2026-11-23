@@ -50,7 +50,7 @@ final class NotchWindowController: NSObject {
         self.appModel = appModel
 
         let layout = PanelLayout(screen: PanelScreenGeometry(screen: screen),
-                                 attached: SettingsStore.shared.notchAttached)
+                                 attached: appModel.settings.notchAttached)
         presentation.layout = layout
         let panel = NSPanel(contentRect: layout.frame,
                             styleMask: [.borderless, .nonactivatingPanel],
@@ -89,8 +89,9 @@ final class NotchWindowController: NSObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.restorePresentation() }
             .store(in: &subscriptions)
-        // 接壤开关切换时立即重排窗口
-        SettingsStore.shared.$notchAttached
+        // 接壤开关切换时立即重排窗口。读注入的设置而不是全局单例：应用里它就是
+        // `SettingsStore.shared`，测试则可以传入自己的设置——此前直接读单例，传入的设置不生效。
+        appModel.settings.$notchAttached
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.refreshFrame() }
@@ -112,6 +113,8 @@ final class NotchWindowController: NSObject {
         animationGeneration += 1
         state = .collapsed
         appModel?.isExpanded = false
+        presentation.didMount = nil
+        presentation.isPresented = false
         panel?.orderOut(nil)
     }
 
@@ -133,14 +136,23 @@ final class NotchWindowController: NSObject {
     /// 按当前配置重排窗口（收起状态下也生效，切换配置无感）
     private func refreshFrame() {
         guard let panel, let screen = PanelMetrics.targetScreen else { return }
-        let layout = PanelLayout(screen: PanelScreenGeometry(screen: screen),
-                                 attached: SettingsStore.shared.notchAttached)
+        let attached = appModel?.settings.notchAttached ?? SettingsStore.shared.notchAttached
+        let layout = PanelLayout(screen: PanelScreenGeometry(screen: screen), attached: attached)
         if presentation.layout != layout {
             presentation.layout = layout
         }
+        applyAppearance()
         if panel.frame != layout.frame {
             panel.setFrame(layout.frame, display: true)
         }
+    }
+
+    /// 接壤卡片保持深色，窗口本身也必须是深色外观。SwiftUI 的颜色跟随环境里的 colorScheme，
+    /// 但材质（Liquid Glass）与滚动条、滑杆等系统控件跟随窗口外观——浅色系统下不强制，
+    /// 接壤面板的玻璃是浅色的，正好在黑色硬件刘海下形成一条亮色接缝。
+    /// 悬浮卡片跟随系统，外观交还给系统（nil）。
+    private func applyAppearance() {
+        panel?.appearance = presentation.layout?.isAttached == true ? NSAppearance(named: .darkAqua) : nil
     }
 
     /// 当前面板 frame（鼠标离开检测用）
@@ -168,14 +180,53 @@ final class NotchWindowController: NSObject {
         state = .expanding
 
         refreshFrame()
-        appModel.isExpanded = true
+        if presentation.isPresented {
+            // 收起途中折返：视图还在屏幕上，弹簧从当前轮廓直接转向，不必重新挂载。
+            appModel.isExpanded = true
+        } else {
+            presentation.isPresented = true
+            unfoldAfterMount(generation: generation)
+        }
         visibilityRecovery.present()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + holdDuration) { [weak self] in
             guard let self, self.animationGeneration == generation else { return }
             self.state = .expanded
         }
     }
+
+    /// 先让折叠轮廓挂载并上屏，再翻转目标值。
+    ///
+    /// 弹簧只能从视图"上一次画出来的值"出发。挂载与翻转落在同一个事务里，视图第一次求值时
+    /// 目标就已经是展开态——没有前值可插值，形变会丢失（屏幕外测试窗口里实测：轮廓停在空形状上
+    /// 不再更新）。所以翻转只由视图挂载完成后的回调（`PanelPresentation.didMount`）触发。
+    private func unfoldAfterMount(generation: Int) {
+        presentation.didMount = { [weak self] in
+            // 让挂载的那一帧先提交完：onAppear 发生在首次求值期间，这里挪到下一轮再翻转。
+            DispatchQueue.main.async {
+                guard let self, self.animationGeneration == generation, self.state == .expanding,
+                      let appModel = self.appModel, !appModel.isExpanded else { return }
+                appModel.isExpanded = true
+            }
+        }
+        // 视图迟迟没有挂载上屏（窗口被系统压住、屏幕参数变动等）。不能到点盲目翻转——那正是
+        // 上面要规避的情形；也不能一直停在"展开中"让热区误判。放弃这次展开，回到可再次唤起的状态。
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.mountTimeout) { [weak self] in
+            guard let self, self.animationGeneration == generation, self.state == .expanding,
+                  self.appModel?.isExpanded != true else { return }
+            DebugLog.write("panel did not mount in \(Self.mountTimeout)s, reset to collapsed")
+            self.animationGeneration += 1
+            self.visibilityRecovery.cancel()
+            self.state = .collapsed
+            self.presentation.didMount = nil
+            self.presentation.isPresented = false
+            self.panel?.orderOut(nil)
+        }
+    }
+
+    /// 视图从置为挂载到完成首屏渲染的等待上限。正常情况下一两帧内完成；0.5s 足以容下
+    /// 一次窗口置前与首帧布局，又不至于让一次失败的展开长时间占住热区。
+    static let mountTimeout: TimeInterval = 0.5
 
     func collapse() {
         guard state == .expanded || state == .expanding, let appModel else { return }
@@ -185,14 +236,20 @@ final class NotchWindowController: NSObject {
         visibilityRecovery.cancel()
         appModel.isExpanded = false
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration) { [weak self] in
+        // 轮廓缩完才卸载视图并移出屏幕；提前移出会把还在收的轮廓截断成一帧。
+        DispatchQueue.main.asyncAfter(deadline: .now() + holdDuration) { [weak self] in
             guard let self, self.animationGeneration == generation else { return }
             self.state = .collapsed
+            self.presentation.didMount = nil
+            self.presentation.isPresented = false
             self.panel?.orderOut(nil)
         }
     }
 
-    private var animationDuration: TimeInterval {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.12 : PanelMetrics.animationDuration
+    /// 状态机在形变开始后等待的时间。收起时必须落在弹簧"过零后为负"的窗口期内，
+    /// 见 `NotchMotion.unfoldHold`。
+    private var holdDuration: TimeInterval {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? NotchMotion.stillDuration : NotchMotion.unfoldHold
     }
 }
