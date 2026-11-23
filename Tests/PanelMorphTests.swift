@@ -119,8 +119,9 @@ final class PanelMorphTests: XCTestCase {
     func testSolidAttachedPanelIsPureBlack() throws {
         let image = try render(layout: attached, progress: 1, expanded: true,
                                background: Color.red)
-        // 取样点避开居中的空状态提示与底栏文字：卡片顶缘以下 26pt 的左右两侧、底栏上方的间隙、颈部。
-        for point in [(x: 30, y: 72), (x: 490, y: 72), (x: 30, y: 586), (x: 490, y: 586), (x: 260, y: 20)] {
+        // 取样点避开所有内容：标题行的图标与文字之外（字体度量随系统版本略有出入，点不能贴着它们）、
+        // 底栏上方的间隙、颈部。卡片顶缘以下 26pt 的高度上、卡片底栏之上 26pt 的高度上各取两点。
+        for point in [(x: 260, y: 72), (x: 440, y: 72), (x: 30, y: 586), (x: 490, y: 586), (x: 260, y: 20)] {
             let colour = try XCTUnwrap(image.colour(x: point.x, y: point.y))
             XCTAssertLessThan(colour.red + colour.green + colour.blue, 0.02, "\(point)")
         }
@@ -646,7 +647,9 @@ private final class Bitmap {
 
     func colour(x: Int, y: Int) -> (red: Double, green: Double, blue: Double)? {
         guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.99 else { return nil }
-        return (c.redComponent, c.greenComponent, c.blueComponent)
+        // 分量逐个显式转成 Double：NSColor 给的是 CGFloat，新编译器会在元组里自动转换，
+        // CI 的 Xcode 16.4 不会——直接装进元组返回在那里是编译错误。
+        return (Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent))
     }
 
     /// 第一个不透明却不在 `allowed`（外扩 1.5pt 容差）之内的像素。
